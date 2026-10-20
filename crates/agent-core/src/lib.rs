@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tokio::sync::mpsc;
 
+pub mod config;
+pub mod rules;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AgentConfig {
@@ -29,7 +32,9 @@ pub struct AgentConfig {
 }
 
 impl Default for AgentConfig {
-    fn default() -> Self { todo!() }
+    fn default() -> Self {
+        config::default_config()
+    }
 }
 
 /// Handle to the running agent; cheap to clone.
@@ -37,10 +42,16 @@ impl Default for AgentConfig {
 pub struct Agent {}
 
 impl Agent {
-    pub async fn new(_cfg: AgentConfig) -> anyhow::Result<Self> { todo!() }
+    pub async fn new(_cfg: AgentConfig) -> anyhow::Result<Self> {
+        todo!()
+    }
     /// Handle one inbound message from `actor` (e.g. "phone:Pixel 9"). Outbound messages go to `out`.
     /// Must return quickly: long tasks run on spawned tasks.
-    pub async fn handle(&self, _actor: &str, _msg: Message, _out: mpsc::Sender<Message>) { todo!() }
+    pub async fn handle(&self, _actor: &str, _msg: Message, _out: mpsc::Sender<Message>) {
+        todo!()
+    }
     /// Kill switch: cancel every running task, deny pending approvals, stop screen stream.
-    pub fn kill(&self, _reason: &str) { todo!() }
+    pub fn kill(&self, _reason: &str) {
+        todo!()
+    }
 }
