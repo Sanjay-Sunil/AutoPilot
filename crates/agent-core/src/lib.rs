@@ -56,6 +56,8 @@ pub struct AgentConfig {
     pub max_agent_steps: usize,
     /// Max time to wait for Laya's decision before using keyword heuristics.
     pub laya_timeout_ms: u64,
+    /// MCP plugin servers (`[[mcp_servers]]`).
+    pub mcp_servers: Vec<tools::mcp::McpServerConfig>,
 }
 
 impl Default for AgentConfig {
@@ -155,12 +157,14 @@ impl Agent {
         let audit = agent_audit::AuditLog::open(&cfg.data_dir.join("audit.sqlite"))?;
         let roots = Arc::new(SharedRoots::new(cfg.shared_roots.clone()));
         let capture = Arc::new(CaptureSource::detect());
-        let tools = tools::builtin::registry(tools::builtin::BuiltinCtx {
+        let mut tools = tools::builtin::registry(tools::builtin::BuiltinCtx {
             roots: Some(roots.clone()),
             data_dir: cfg.data_dir.clone(),
             shell_allowlist: cfg.shell_allowlist.clone(),
             capture: capture.clone(),
         });
+        // Tool closures hold the servers; processes start lazily and stop when idle.
+        let plugins = tools::mcp::register(&mut tools, &cfg.mcp_servers, &cfg.data_dir).await;
         let mut cloud: Vec<Arc<dyn LlmProvider>> = vec![];
         if let Some(k) = agent_llm::api_key("claude") {
             cloud.push(Arc::new(agent_llm::ClaudeProvider::new(
@@ -191,6 +195,7 @@ impl Agent {
             cloud = cloud.len(),
             local = local.is_some(),
             tools = tools.len(),
+            plugins = plugins.len(),
             "agent ready"
         );
         let parts = Parts {

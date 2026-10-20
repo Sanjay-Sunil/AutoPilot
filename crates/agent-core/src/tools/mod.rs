@@ -1,6 +1,7 @@
 //! Tool registry. Each tool declares name, description, JSON schema, risk tier (possibly
 //! argument-dependent), sensitivity, relevant intents, a preview, and its implementation.
 pub mod builtin;
+pub mod mcp;
 pub mod shell;
 
 use agent_llm::ToolSpec;

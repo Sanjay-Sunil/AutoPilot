@@ -101,12 +101,35 @@ enum DevicesCmd {
 #[derive(Subcommand)]
 enum KeysCmd {
     /// Read the key from stdin (no echo on a terminal) and store it.
+    /// `claude`, `openai`, `gemini`, or an MCP plugin secret `mcp:<server>:<ENV_VAR>`.
     Set {
-        #[arg(value_parser = ["claude", "openai", "gemini"])]
+        #[arg(value_parser = parse_key_name)]
         provider: String,
     },
     /// Show which providers have a key (never the key itself).
     List,
+}
+
+fn parse_key_name(s: &str) -> Result<String, String> {
+    if matches!(s, "claude" | "openai" | "gemini") {
+        return Ok(s.to_string());
+    }
+    let ok = s
+        .strip_prefix("mcp:")
+        .and_then(|r| r.split_once(':'))
+        .is_some_and(|(srv, var)| {
+            !srv.is_empty()
+                && srv
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
+                && !var.is_empty()
+                && var.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        });
+    if ok {
+        Ok(s.to_string())
+    } else {
+        Err("expected claude, openai, gemini, or mcp:<server>:<ENV_VAR>".into())
+    }
 }
 
 #[derive(Subcommand)]

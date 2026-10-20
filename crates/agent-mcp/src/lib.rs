@@ -571,8 +571,10 @@ impl Server {
         let _busy = Busy(self);
         let c = self.connection().await?;
         let tools = c.list_tools(self.opts.call_timeout).await?;
-        if let Some(p) = &self.opts.cache {
-            write_cache(p, &tools)?;
+        if let Some(p) = &self.opts.cache
+            && let Err(e) = write_cache(p, &tools)
+        {
+            tracing::warn!(server = %self.name, "cannot cache MCP tool list: {e}");
         }
         Ok(tools)
     }
@@ -603,7 +605,10 @@ fn write_cache(path: &Path, tools: &[McpTool]) -> anyhow::Result<()> {
     if let Some(d) = path.parent() {
         std::fs::create_dir_all(d)?;
     }
-    let tmp = path.with_extension("tmp");
+    // Unique temp name: the background refresh and list_tools may write concurrently.
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp = path.with_extension(format!("{}.{n}.tmp", std::process::id()));
     std::fs::write(&tmp, serde_json::to_vec_pretty(tools)?)?;
     std::fs::rename(&tmp, path)?;
     Ok(())

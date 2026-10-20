@@ -61,6 +61,7 @@ pub(crate) fn default_config() -> AgentConfig {
         approval_timeout_secs: 60,
         max_agent_steps: 12,
         laya_timeout_ms: 1200,
+        mcp_servers: vec![],
     }
 }
 
@@ -168,6 +169,13 @@ mod tests {
         assert_eq!(c.shared_roots[0].0, "Docs");
         assert_eq!(c.approval_timeout_secs, 60);
         assert!(AgentConfig::from_toml("cloud_enabled = \"yes\"").is_err());
+        assert!(c.mcp_servers.is_empty());
+        let c = AgentConfig::from_toml(
+            "[[mcp_servers]]\nname = \"odoo\"\ncommand = \"uvx\"\nread_tools = [\"search_*\"]\n",
+        )
+        .unwrap();
+        assert_eq!(c.mcp_servers[0].name, "odoo");
+        assert_eq!(c.mcp_servers[0].read_tools, ["search_*"]);
         let missing = AgentConfig::load(Path::new("/nonexistent/autopilot.toml")).unwrap();
         assert!(missing.cloud_enabled);
     }

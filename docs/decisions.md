@@ -54,3 +54,15 @@ Format: context → decision → consequences. Newest last. Spec §3 decisions n
 - **Decision:** The relay is stateless; Postgres migrations exist behind the `db` feature and
   `DATABASE_URL` is optional.
 - **Consequences:** Self-hosting is a single small binary; account features come in v1 follow-ups.
+
+## ADR-007 — MCP plugins: stdio only, policy in our config
+
+- **Context:** M5 needs MCP plugins (first: Odoo) with per-server permission scopes. Servers are
+  third-party code returning untrusted names, descriptions, annotations and results.
+- **Decision:** Own minimal client in `agent-mcp` (newline JSON-RPC over stdio, protocol 2025-06-18,
+  no client capabilities except ping) rather than an SDK. Risk tier per tool comes from config globs
+  (`read_tools`, `destructive_tools`, `default_risk`, `allow`/`deny`); annotations may only raise risk.
+  Servers start lazily, stop after idle, run with a cleared environment, and their tool lists are
+  cached so startup spawns nothing. Results are labelled untrusted; images are dropped for now.
+- **Consequences:** Small dependency surface and low idle cost. No Streamable HTTP, sampling,
+  elicitation or resources yet; tool-list changes need a daemon restart.

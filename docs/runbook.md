@@ -44,6 +44,41 @@ autopilotd keys list           # shows which providers are configured, never the
 
 Cloud use is policy-gated (`cloud_enabled`, `cloud_allow_high_sensitivity`, `preferred_cloud`).
 
+### MCP plugins (Odoo first)
+
+Plugins are stdio MCP servers listed in `~/.config/autopilot/config.toml`. Each server's tools show up
+as `mcp.<server>.<tool>`. **You** set the policy, not the server: `allow`/`deny` pick which tools
+exist, `read_tools` run without approval, `destructive_tools` always ask with destructive tier, and
+everything else uses `default_risk` (default `write`, so it asks). A server's `readOnlyHint` never skips
+approval. Plugins start on first use and stop after `idle_secs` (default 300) without calls. They get
+only PATH/HOME/LANG/XDG_* from the daemon plus their own `env`/`secret_env`, never the cloud API keys.
+
+Odoo via [mcp-server-odoo](https://github.com/ivnvxd/mcp-server-odoo) (needs `uv`):
+
+```toml
+[[mcp_servers]]
+name = "odoo"
+command = "uvx"
+args = ["mcp-server-odoo"]
+env = { ODOO_URL = "https://mycompany.odoo.com", ODOO_DB = "mycompany" }
+secret_env = ["ODOO_API_KEY"]   # keyring entry mcp:odoo:ODOO_API_KEY, or the daemon's env var
+read_tools = ["search_records", "get_record", "list_models", "aggregate_records", "list_resource_templates"]
+deny = ["delete_*"]
+sensitivity = "medium"          # "high" keeps results away from cloud models unless allowed
+```
+
+```sh
+autopilotd keys set mcp:odoo:ODOO_API_KEY   # Odoo: My Profile -> Account Security -> New API key
+# Check that the server starts and see its tools (pass non-secret env inline):
+MCP_ENV='ODOO_URL=https://mycompany.odoo.com,ODOO_DB=mycompany,ODOO_API_KEY=...' \
+  cargo run -p agent-mcp --example mcp_probe -- uvx mcp-server-odoo
+```
+
+On the first daemon start the tool list is fetched and cached in
+`~/.local/share/autopilot/mcp/<server>.tools.json`; later starts read the cache and spawn nothing.
+The cache refreshes whenever the plugin starts, and new tools appear after the next daemon restart.
+Delete the cache file to force a refetch.
+
 ## 4. systemd user units
 
 `~/.config/systemd/user/autopilotd.service`:
