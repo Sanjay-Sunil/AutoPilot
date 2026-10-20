@@ -131,9 +131,16 @@ Android: enable USB debugging, or `eas build --profile development` for a cloud-
 ## 9. Tray app
 
 ```sh
-cd apps/desktop/src-tauri
-cargo build --release   # needs webkit2gtk-4.1, libayatana-appindicator3 (Linux)
+cd apps/desktop
+npx -p typescript@5 tsc -p ui          # compiles ui/src/main.ts -> ui/public/main.js
+cd src-tauri && cargo build --release  # needs webkit2gtk-4.1, libayatana-appindicator3 (Linux)
+# or with the Tauri CLI (runs the tsc step itself): cargo tauri build
 ```
+
+The tray talks to the daemon over `~/.local/share/autopilot/control.sock` (JSON lines:
+`{"cmd":"pair"|"kill"|"status"|"devices"|"revoke"}`), falling back to `autopilotd <cmd> --json`.
+Override the binary with `AUTOPILOTD=/path/to/autopilotd`. On Hyprland the tray's global shortcut
+cannot register (no global-shortcut protocol in the plugin), so use the Hyprland bind from section 5.
 
 ## 10. Logs and troubleshooting
 
