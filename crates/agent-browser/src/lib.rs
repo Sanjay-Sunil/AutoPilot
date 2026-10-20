@@ -40,9 +40,19 @@ pub struct Element {
 
 pub struct Browser {
     inner: CdpBrowser,
-    page: Page,
+    /// Active tab; switches when a click opens a new tab or on `switch_tab`.
+    page: std::sync::Mutex<Page>,
+    /// Target ids in first-seen order (CDP returns pages unordered).
+    order: std::sync::Mutex<Vec<String>>,
     handler: JoinHandle<()>,
 }
+
+fn tid(p: &Page) -> String {
+    p.target_id().as_ref().to_string()
+}
+
+/// Max time `settle` waits for a page to stop changing after an action.
+pub const SETTLE_TIMEOUT: Duration = Duration::from_secs(4);
 
 /// Locate a Chromium-family browser: `$AUTOPILOT_BROWSER`, then `PATH`, then standard
 /// install locations (Windows / macOS).
@@ -182,6 +192,31 @@ const TYPE_JS: &str = r#"
 })()
 "#;
 
+const SELECT_JS: &str = r#"
+(() => {
+  const el = document.querySelector('[data-autopilot-idx="__IDX__"]');
+  if (!el) return { status: 'missing' };
+  if (el.tagName.toLowerCase() !== 'select') return { status: 'not_select' };
+  const want = String(__OPT__).toLowerCase().trim();
+  const opts = Array.from(el.options);
+  const txt = o => (o.text || '').toLowerCase().trim();
+  const o = opts.find(o => txt(o) === want || o.value.toLowerCase() === want)
+         || opts.find(o => txt(o).includes(want));
+  if (!o) return { status: 'no_match', options: opts.slice(0, 30).map(o => o.text.trim()) };
+  el.value = o.value;
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+  return { status: 'ok', chosen: o.text.trim() };
+})()
+"#;
+
+async fn page_info(p: &Page) -> anyhow::Result<PageInfo> {
+    Ok(PageInfo {
+        url: p.url().await?.unwrap_or_default(),
+        title: p.get_title().await?.unwrap_or_default(),
+    })
+}
+
 fn idx_selector(index: usize) -> String {
     format!(r#"[data-autopilot-idx="{index}"]"#)
 }
@@ -229,23 +264,34 @@ impl Browser {
                 return Err(e.into());
             }
         };
+        // Close Chrome's own startup tab so only ours remains.
+        if let Ok(pages) = inner.pages().await {
+            for p in pages {
+                if p.target_id() != page.target_id() {
+                    let _ = p.close().await;
+                }
+            }
+        }
         Ok(Self {
             inner,
-            page,
+            order: std::sync::Mutex::new(vec![tid(&page)]),
+            page: std::sync::Mutex::new(page),
             handler,
         })
     }
 
-    async fn info(&self) -> anyhow::Result<PageInfo> {
-        Ok(PageInfo {
-            url: self.page.url().await?.unwrap_or_default(),
-            title: self.page.get_title().await?.unwrap_or_default(),
-        })
+    fn page(&self) -> Page {
+        self.page.lock().unwrap().clone()
+    }
+
+    /// URL and title of the active tab.
+    pub async fn info(&self) -> anyhow::Result<PageInfo> {
+        page_info(&self.page()).await
     }
 
     pub async fn navigate(&self, url: &str) -> anyhow::Result<PageInfo> {
         check_url(url)?;
-        tokio::time::timeout(NAV_TIMEOUT, self.page.goto(url.trim()))
+        tokio::time::timeout(NAV_TIMEOUT, self.page().goto(url.trim()))
             .await
             .map_err(|_| anyhow::anyhow!("navigation timed out"))??;
         self.info().await
@@ -253,7 +299,7 @@ impl Browser {
 
     pub async fn page_text(&self, max_chars: usize) -> anyhow::Result<String> {
         let s: String = self
-            .page
+            .page()
             .evaluate("document.body ? document.body.innerText : ''")
             .await?
             .into_value()?;
@@ -263,16 +309,19 @@ impl Browser {
     /// Interactive elements (links, buttons, inputs) with visible text, capped at `max`.
     pub async fn elements(&self, max: usize) -> anyhow::Result<Vec<Element>> {
         let js = ELEMENTS_JS.replace("__MAX__", &max.min(10_000).to_string());
-        Ok(self.page.evaluate(js).await?.into_value()?)
+        Ok(self.page().evaluate(js).await?.into_value()?)
     }
 
     pub async fn click_index(&self, index: usize) -> anyhow::Result<()> {
         let el = self
-            .page
+            .page()
             .find_element(idx_selector(index))
             .await
             .map_err(|_| anyhow::anyhow!("element {index} not found; call elements() again"))?;
+        let before = self.tab_ids().await?;
         el.click().await?;
+        self.follow_new_tab(&before).await?;
+        self.settle().await;
         Ok(())
     }
 
@@ -280,18 +329,19 @@ impl Browser {
         let js = TYPE_JS
             .replace("__IDX__", &index.to_string())
             .replace("__TEXT__", &serde_json::to_string(text)?);
-        let r: String = self.page.evaluate(js).await?.into_value()?;
+        let r: String = self.page().evaluate(js).await?.into_value()?;
         match r.as_str() {
             "ok" => {}
             "missing" => anyhow::bail!("element {index} not found; call elements() again"),
             _ => anyhow::bail!("element {index} is not editable"),
         }
         if submit {
-            self.page
+            self.page()
                 .find_element(idx_selector(index))
                 .await?
                 .press_key("Enter")
                 .await?;
+            self.settle().await;
         }
         Ok(())
     }
@@ -301,7 +351,184 @@ impl Browser {
             .format(CaptureScreenshotFormat::Jpeg)
             .quality(i64::from(quality.clamp(1, 100)))
             .build();
-        Ok(self.page.screenshot(params).await?)
+        Ok(self.page().screenshot(params).await?)
+    }
+
+    /// Wait (bounded by [`SETTLE_TIMEOUT`]) until the document is loaded and its text stops
+    /// changing, so single-page apps have rendered before the next read. Never fails.
+    pub async fn settle(&self) {
+        let page = self.page();
+        let deadline = tokio::time::Instant::now() + SETTLE_TIMEOUT;
+        let mut last: Option<(String, i64)> = None;
+        let mut stable = 0;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        while tokio::time::Instant::now() < deadline {
+            let probe = "[document.readyState, document.body ? document.body.innerText.length : 0]";
+            let cur: Option<(String, i64)> = match page.evaluate(probe).await {
+                Ok(v) => v.into_value().ok(),
+                Err(_) => None, // navigating: context destroyed
+            };
+            match (&cur, &last) {
+                (Some(c), Some(l)) if c.0 == "complete" && c == l => stable += 1,
+                _ => stable = 0,
+            }
+            if stable >= 2 {
+                return;
+            }
+            last = cur;
+            tokio::time::sleep(Duration::from_millis(150)).await;
+        }
+    }
+
+    async fn tab_ids(&self) -> anyhow::Result<Vec<String>> {
+        Ok(self.ordered_pages().await?.iter().map(tid).collect())
+    }
+
+    /// Live pages in first-seen order; new ones are appended.
+    async fn ordered_pages(&self) -> anyhow::Result<Vec<Page>> {
+        let mut pages = self.inner.pages().await?;
+        let mut order = self.order.lock().unwrap();
+        order.retain(|id| pages.iter().any(|p| tid(p) == *id));
+        for p in &pages {
+            if !order.contains(&tid(p)) {
+                order.push(tid(p));
+            }
+        }
+        pages.sort_by_key(|p| order.iter().position(|id| *id == tid(p)));
+        Ok(pages)
+    }
+
+    /// If an action opened a new tab, make it the active one.
+    async fn follow_new_tab(&self, before: &[String]) -> anyhow::Result<()> {
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let pages = self.ordered_pages().await?;
+        if let Some(p) = pages.into_iter().rev().find(|p| !before.contains(&tid(p))) {
+            let _ = p.bring_to_front().await;
+            *self.page.lock().unwrap() = p;
+        }
+        Ok(())
+    }
+
+    /// Open tabs in order; `.1` marks the active one.
+    pub async fn tabs(&self) -> anyhow::Result<Vec<(PageInfo, bool)>> {
+        let active = self.page().target_id().clone();
+        let mut out = vec![];
+        for p in self.ordered_pages().await? {
+            let is_active = *p.target_id() == active;
+            out.push((
+                page_info(&p).await.unwrap_or(PageInfo {
+                    url: String::new(),
+                    title: String::new(),
+                }),
+                is_active,
+            ));
+        }
+        Ok(out)
+    }
+
+    pub async fn switch_tab(&self, index: usize) -> anyhow::Result<PageInfo> {
+        let pages = self.ordered_pages().await?;
+        let p = pages
+            .into_iter()
+            .nth(index)
+            .ok_or_else(|| anyhow::anyhow!("no tab {index}; call tabs() first"))?;
+        let _ = p.bring_to_front().await;
+        *self.page.lock().unwrap() = p;
+        self.info().await
+    }
+
+    /// `up`/`down` scroll ~80% of the viewport; `top`/`bottom` jump. Returns the new position.
+    pub async fn scroll(&self, direction: &str) -> anyhow::Result<String> {
+        let action = match direction {
+            "up" => "window.scrollBy(0, -window.innerHeight * 0.8)",
+            "down" => "window.scrollBy(0, window.innerHeight * 0.8)",
+            "top" => "window.scrollTo(0, 0)",
+            "bottom" => "window.scrollTo(0, document.documentElement.scrollHeight)",
+            _ => anyhow::bail!("direction must be up, down, top or bottom"),
+        };
+        let js = format!(
+            "(() => {{ {action}; const h = document.documentElement.scrollHeight - window.innerHeight; \
+             return h <= 0 ? 100 : Math.round(window.scrollY / h * 100); }})()"
+        );
+        let pct: i64 = self.page().evaluate(js).await?.into_value()?;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        Ok(format!("Scrolled {direction}; now at {pct}% of the page."))
+    }
+
+    /// History navigation (`back` = true goes back).
+    pub async fn history(&self, back: bool) -> anyhow::Result<PageInfo> {
+        let js = if back {
+            "history.back()"
+        } else {
+            "history.forward()"
+        };
+        self.page().evaluate(js).await?;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        self.settle().await;
+        self.info().await
+    }
+
+    /// Choose an option of a `<select>` by visible text or value (case-insensitive; exact match
+    /// first, then substring). Returns the chosen option's text.
+    pub async fn select_index(&self, index: usize, option: &str) -> anyhow::Result<String> {
+        let js = SELECT_JS
+            .replace("__IDX__", &index.to_string())
+            .replace("__OPT__", &serde_json::to_string(option)?);
+        let r: serde_json::Value = self.page().evaluate(js).await?.into_value()?;
+        match r["status"].as_str() {
+            Some("ok") => Ok(r["chosen"].as_str().unwrap_or_default().to_string()),
+            Some("missing") => anyhow::bail!("element {index} not found; call elements() again"),
+            Some("not_select") => anyhow::bail!("element {index} is not a dropdown"),
+            _ => anyhow::bail!("no option matches `{option}`; options: {}", r["options"]),
+        }
+    }
+
+    /// Press a key (`Enter`, `Escape`, `Tab`, `ArrowDown`, `PageDown`, ...) in the focused element.
+    pub async fn press_key(&self, key: &str) -> anyhow::Result<()> {
+        let page = self.page();
+        let el = match page.find_element("*:focus").await {
+            Ok(e) => e,
+            Err(_) => page.find_element("body").await?,
+        };
+        el.press_key(key).await?;
+        self.settle().await;
+        Ok(())
+    }
+
+    /// Wait until the page text contains `text` (case-insensitive). Returns whether it appeared.
+    pub async fn wait_for_text(&self, text: &str, timeout: Duration) -> anyhow::Result<bool> {
+        let needle = text.to_lowercase();
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            if self
+                .page_text(200_000)
+                .await
+                .unwrap_or_default()
+                .to_lowercase()
+                .contains(&needle)
+            {
+                return Ok(true);
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Ok(false);
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    }
+
+    /// Save downloads into `dir` instead of prompting.
+    pub async fn set_download_dir(&self, dir: &Path) -> anyhow::Result<()> {
+        use chromiumoxide::cdp::browser_protocol::browser::{
+            SetDownloadBehaviorBehavior, SetDownloadBehaviorParams,
+        };
+        std::fs::create_dir_all(dir)?;
+        let params = SetDownloadBehaviorParams::builder()
+            .behavior(SetDownloadBehaviorBehavior::Allow)
+            .download_path(dir.to_string_lossy().to_string())
+            .build()
+            .map_err(|e| anyhow::anyhow!(e))?;
+        self.inner.execute(params).await?;
+        Ok(())
     }
 
     pub async fn close(mut self) -> anyhow::Result<()> {
@@ -411,6 +638,100 @@ mod tests {
 
         let jpg = b.screenshot_jpeg(60).await.unwrap();
         assert_eq!(&jpg[..2], &[0xFF, 0xD8], "JPEG magic");
+        b.close().await.unwrap();
+    }
+
+    const PAGE2: &str = r#"<html><head><title>P2</title></head><body>
+<select aria-label="Size"><option value="s">Small</option><option value="m">Medium</option><option value="l">Large one</option></select>
+<p id="sel"></p>
+<a href="about:blank" target="_blank">New tab</a>
+<a download="note.txt" href="data:text/plain,hello%20download">Get file</a>
+<input aria-label="Keys" onkeydown="if(event.key==='Escape')document.title='esc'">
+<button onclick="setTimeout(()=>{document.getElementById('late').textContent='Loaded later'},400)">Load</button>
+<p id="late"></p>
+<div style="height:5000px">tall</div>
+<script>document.querySelector('select').addEventListener('change',e=>{document.getElementById('sel').textContent='chose '+e.target.value})</script>
+</body></html>"#;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn integration_navigation_tabs_downloads() {
+        if find_browser().is_none() {
+            eprintln!("no browser found; skipping");
+            return;
+        }
+        let profile = tempfile::tempdir().unwrap();
+        let dl = tempfile::tempdir().unwrap();
+        let b = Browser::launch(profile.path(), true).await.unwrap();
+        b.set_download_dir(dl.path()).await.unwrap();
+        b.navigate(&format!("data:text/html,{}", urlencode(PAGE)))
+            .await
+            .unwrap();
+        let info = b
+            .navigate(&format!("data:text/html,{}", urlencode(PAGE2)))
+            .await
+            .unwrap();
+        assert_eq!(info.title, "P2");
+
+        let els = b.elements(50).await.unwrap();
+        let find = |t: &str| {
+            els.iter()
+                .find(|e| e.text.starts_with(t))
+                .map(|e| e.index)
+                .unwrap()
+        };
+        assert_eq!(
+            b.select_index(find("Size"), "large").await.unwrap(),
+            "Large one"
+        );
+        assert!(b.page_text(2000).await.unwrap().contains("chose l"));
+        let e = b
+            .select_index(find("Size"), "huge")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("Medium"), "{e}");
+        assert!(b.select_index(find("Keys"), "x").await.is_err());
+
+        b.click_index(find("Load")).await.unwrap();
+        assert!(
+            b.wait_for_text("loaded LATER", Duration::from_secs(3))
+                .await
+                .unwrap()
+        );
+        assert!(
+            !b.wait_for_text("never", Duration::from_millis(300))
+                .await
+                .unwrap()
+        );
+
+        b.type_index(find("Keys"), "a", false).await.unwrap();
+        b.press_key("Escape").await.unwrap();
+        assert_eq!(b.info().await.unwrap().title, "esc");
+
+        assert!(b.scroll("bottom").await.unwrap().contains("100%"));
+        assert!(b.scroll("top").await.unwrap().contains(" 0%"));
+        assert!(b.scroll("sideways").await.is_err());
+
+        b.click_index(find("Get file")).await.unwrap();
+        let file = dl.path().join("note.txt");
+        for _ in 0..50 {
+            if file.is_file() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "hello download");
+
+        // A target=_blank link becomes the active tab; switching back works.
+        b.click_index(find("New tab")).await.unwrap();
+        let tabs = b.tabs().await.unwrap();
+        assert_eq!(tabs.len(), 2, "{tabs:?}");
+        assert!(tabs[1].1 && tabs[1].0.url == "about:blank", "{tabs:?}");
+        assert_eq!(b.switch_tab(0).await.unwrap().title, "esc");
+        assert!(b.switch_tab(9).await.is_err());
+
+        assert_eq!(b.history(true).await.unwrap().title, "T1");
+        assert_eq!(b.history(false).await.unwrap().title, "P2");
         b.close().await.unwrap();
     }
 
