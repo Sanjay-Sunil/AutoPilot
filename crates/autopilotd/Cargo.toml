@@ -12,4 +12,19 @@ agent-llm = { version = "0.1.0", path = "../agent-llm" }
 agent-protocol = { version = "0.1.0", path = "../agent-protocol" }
 agent-transport = { version = "0.1.0", path = "../agent-transport" }
 anyhow = "1.0.104"
+base64 = "0.23.1"
+clap = { version = "4.6.7", features = ["derive"] }
+dirs = "7.0.0"
+gethostname = "1.1.0"
+local-ip-address = "0.6.13"
+rpassword = "7.5.4"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
 tokio = { version = "1.54.0", features = ["full"] }
+toml = "1.1.8"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+uuid = "1.26.1"
+
+[dev-dependencies]
+tempfile = "3.27.0"

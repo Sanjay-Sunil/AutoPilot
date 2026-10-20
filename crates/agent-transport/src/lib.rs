@@ -50,6 +50,8 @@ const CLIENT_PING_INTERVAL: Duration = Duration::from_secs(25);
 const RELAY_PING_INTERVAL: Duration = Duration::from_secs(30);
 const RELAY_DEAD_AFTER: Duration = Duration::from_secs(90);
 const RELAY_MAX_BACKOFF: Duration = Duration::from_secs(60);
+/// Relay close code: a newer connection of the same role replaced this one.
+const RELAY_CLOSE_REPLACED: u16 = 4000;
 const MAX_PENDING_TOKENS: usize = 5;
 const HANDSHAKES_PER_MINUTE: u32 = 10;
 const MAX_CONNECTIONS: usize = 32;
@@ -1035,17 +1037,25 @@ async fn relay_loop(relay: String, ctx: Arc<Ctx>) {
     let mut backoff = Duration::from_secs(1);
     loop {
         let started = Instant::now();
+        let mut replaced = false;
         match tokio_tungstenite::connect_async_with_config(url.as_str(), Some(ws_config()), true)
             .await
         {
             Ok((ws, _)) => {
                 info!("connected to relay");
-                relay_conn(ws, ctx.clone()).await;
-                info!("relay connection lost");
+                if relay_conn(ws, ctx.clone()).await {
+                    // 4000: another laptop instance took over this room; avoid flapping.
+                    warn!("relay room taken over by another connection (4000); backing off");
+                    replaced = true;
+                } else {
+                    info!("relay connection lost");
+                }
             }
             Err(e) => warn!("relay connect failed: {e}"),
         }
-        if started.elapsed() > Duration::from_secs(30) {
+        if replaced {
+            backoff = RELAY_MAX_BACKOFF;
+        } else if started.elapsed() > Duration::from_secs(30) {
             backoff = Duration::from_secs(1);
         }
         let jitter = Duration::from_millis(u64::from(rand_u16() % 500));
@@ -1060,7 +1070,8 @@ fn rand_u16() -> u16 {
     u16::from_le_bytes(b)
 }
 
-async fn relay_conn<S>(ws: WebSocketStream<S>, ctx: Arc<Ctx>)
+/// Returns true when the relay closed us with 4000 (replaced by a newer laptop connection).
+async fn relay_conn<S>(ws: WebSocketStream<S>, ctx: Arc<Ctx>) -> bool
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -1090,6 +1101,7 @@ where
     let mut limiter = RateLimiter::new(HANDSHAKES_PER_MINUTE);
     let relay_ip = IpAddr::from([0, 0, 0, 0]);
     let mut current: Option<mpsc::Sender<WsIn>> = None;
+    let mut replaced = false;
     loop {
         let m = match timeout(RELAY_DEAD_AFTER, stream.next()).await {
             Err(_) => break,
@@ -1139,7 +1151,10 @@ where
                     }
                 }
             }
-            WsMessage::Close(_) => break,
+            WsMessage::Close(frame) => {
+                replaced = frame.is_some_and(|f| u16::from(f.code) == RELAY_CLOSE_REPLACED);
+                break;
+            }
             _ => {}
         }
     }
@@ -1148,6 +1163,7 @@ where
     let _ = stop_tx.send(());
     drop(out_tx);
     let _ = writer.await;
+    replaced
 }
 
 // ---- client ----
