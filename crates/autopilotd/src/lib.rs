@@ -105,8 +105,8 @@ impl DaemonState {
     }
 }
 
-/// Addresses (`ip:port`) a phone can try for `listen`. Wildcard binds expand to all non-loopback
-/// interface addresses (LAN, Tailscale).
+/// Addresses (`ip:port`) a phone can try for `listen`. Wildcard binds expand to loopback (USB)
+/// plus all non-loopback interface addresses (LAN, Tailscale).
 pub fn lan_addrs(listen: &str) -> Vec<String> {
     let Ok(sa) = listen.parse::<std::net::SocketAddr>() else {
         return vec![listen.to_string()];
@@ -129,6 +129,11 @@ pub fn lan_addrs(listen: &str) -> Vec<String> {
         .unwrap_or_default();
     out.sort();
     out.dedup();
+    // Loopback first: reaches the laptop over USB with `adb reverse tcp:<port> tcp:<port>`, and
+    // fails instantly otherwise. The Noise handshake pins the laptop key either way.
+    if sa.ip().is_ipv4() {
+        out.insert(0, format!("127.0.0.1:{}", sa.port()));
+    }
     out
 }
 
