@@ -4,5 +4,24 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+description = "AutoPilot backend: blind WebSocket relay (+ optional device registry)"
+
+[features]
+default = []
+# Postgres device registry / pairing / passkeys (spec section 11). Off by default so the
+# relay builds and runs without a database.
+db = ["dep:sqlx"]
 
 [dependencies]
+anyhow = "1"
+axum = { version = "0.8", features = ["ws"] }
+futures-util = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+sqlx = { version = "0.8", optional = true, default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "migrate", "macros"] }
+
+[dev-dependencies]
+tokio-tungstenite = "0.29"
