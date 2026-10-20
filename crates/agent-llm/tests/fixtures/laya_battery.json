@@ -1,0 +1,94 @@
+{
+ "model": "laya-rl-agent",
+ "answers": {
+  "intent": {
+   "type": "choice",
+   "choice": "system_info",
+   "probabilities": {
+    "open_app": 0.0,
+    "window_control": 0.0,
+    "files": 0.0,
+    "shell": 0.0,
+    "system_control": 0.0,
+    "system_info": 1.0,
+    "browser": 0.0,
+    "screen": 0.0,
+    "clipboard": 0.0,
+    "type_or_keys": 0.0,
+    "question": 0.0,
+    "multi_step_task": 0.0
+   },
+   "confidence": 1.0,
+   "answer_confidence": 1.0,
+   "action": {
+    "act_probability": 1.0
+   },
+   "x_jev_confidence": 1.0
+  },
+  "risk": {
+   "type": "choice",
+   "choice": "read",
+   "probabilities": {
+    "read": 0.5349,
+    "write": 0.1469,
+    "destructive": 0.3182
+   },
+   "confidence": 0.1072,
+   "answer_confidence": 0.5349,
+   "action": {
+    "act_probability": 1.0
+   },
+   "x_jev_confidence": 0.3024
+  },
+  "sensitivity": {
+   "type": "choice",
+   "choice": "low",
+   "probabilities": {
+    "low": 0.8632,
+    "medium": 0.1051,
+    "high": 0.0317
+   },
+   "confidence": 0.5692,
+   "answer_confidence": 0.8632,
+   "action": {
+    "act_probability": 1.0
+   },
+   "x_jev_confidence": 0.7948
+  },
+  "needs_cloud": {
+   "type": "noul",
+   "noul": 0.0,
+   "confidence": 1.0,
+   "answer_confidence": 1.0,
+   "action": {
+    "act_probability": 1.0
+   }
+  }
+ },
+ "usage": {
+  "input_tokens": 319,
+  "output_tokens": 0,
+  "state_tokens": 9,
+  "state_tokens_dropped": 0,
+  "truncated": false,
+  "truncated_questions": []
+ },
+ "routing": {
+  "model": "english",
+  "repo": "convaiinnovations/laya",
+  "reason": "English Latin text",
+  "detection": {
+   "script": "latin",
+   "script_profile": {
+    "latin": 1.0
+   },
+   "language": "en",
+   "is_english": true,
+   "language_undecided": false,
+   "diacritic_rate": 0.0,
+   "non_latin_fraction": 0.0,
+   "mixed_segment": null
+  },
+  "workflow": null
+ }
+}

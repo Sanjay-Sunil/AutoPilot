@@ -6,9 +6,28 @@ use agent_protocol::{Brain, RiskTier, Sensitivity};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+pub mod claude;
+pub mod gemini;
+pub mod http;
+pub mod keys;
+pub mod laya;
+pub mod ollama;
+pub mod openai;
+
+pub use claude::ClaudeProvider;
+pub use gemini::GeminiProvider;
+pub use http::RetryPolicy;
+pub use laya::LayaClient;
+pub use ollama::OllamaProvider;
+pub use openai::OpenAiProvider;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Role { User, Assistant, Tool }
+pub enum Role {
+    User,
+    Assistant,
+    Tool,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolSpec {
@@ -40,9 +59,33 @@ pub struct Msg {
 }
 
 impl Msg {
-    pub fn user(s: impl Into<String>) -> Self { Self { role: Role::User, content: s.into(), tool_calls: vec![], tool_call_id: None, images: vec![] } }
-    pub fn assistant(s: impl Into<String>, calls: Vec<ToolCall>) -> Self { Self { role: Role::Assistant, content: s.into(), tool_calls: calls, tool_call_id: None, images: vec![] } }
-    pub fn tool(id: impl Into<String>, s: impl Into<String>) -> Self { Self { role: Role::Tool, content: s.into(), tool_calls: vec![], tool_call_id: Some(id.into()), images: vec![] } }
+    pub fn user(s: impl Into<String>) -> Self {
+        Self {
+            role: Role::User,
+            content: s.into(),
+            tool_calls: vec![],
+            tool_call_id: None,
+            images: vec![],
+        }
+    }
+    pub fn assistant(s: impl Into<String>, calls: Vec<ToolCall>) -> Self {
+        Self {
+            role: Role::Assistant,
+            content: s.into(),
+            tool_calls: calls,
+            tool_call_id: None,
+            images: vec![],
+        }
+    }
+    pub fn tool(id: impl Into<String>, s: impl Into<String>) -> Self {
+        Self {
+            role: Role::Tool,
+            content: s.into(),
+            tool_calls: vec![],
+            tool_call_id: Some(id.into()),
+            images: vec![],
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,7 +98,11 @@ pub struct ChatRequest {
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
-pub struct Usage { pub input_tokens: u64, pub output_tokens: u64, pub cost_usd: f64 }
+pub struct Usage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cost_usd: f64,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatResponse {
@@ -73,23 +120,23 @@ pub trait LlmProvider: Send + Sync {
     fn supports_vision(&self) -> bool;
     async fn chat(&self, req: &ChatRequest) -> anyhow::Result<ChatResponse>;
     /// Streams text deltas through `on_delta`; returns the full response (incl. tool calls).
-    async fn chat_stream(&self, req: &ChatRequest, on_delta: DeltaFn<'_>) -> anyhow::Result<ChatResponse>;
+    async fn chat_stream(
+        &self,
+        req: &ChatRequest,
+        on_delta: DeltaFn<'_>,
+    ) -> anyhow::Result<ChatResponse>;
 }
 
 /// Look up an API key: env var first (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY),
 /// then OS keyring (service "autopilot", user = provider name: "claude" | "openai" | "gemini").
-pub fn api_key(_provider: &str) -> Option<String> { todo!() }
+/// `GOOGLE_API_KEY` is also accepted for gemini. Keyring failures yield `None`, never a panic.
+pub fn api_key(provider: &str) -> Option<String> {
+    keys::lookup(provider, |k| std::env::var(k).ok(), keys::keyring_get)
+}
 /// Store a key in the OS keyring.
-pub fn set_api_key(_provider: &str, _key: &str) -> anyhow::Result<()> { todo!() }
-
-pub struct ClaudeProvider {}
-impl ClaudeProvider { pub fn new(_api_key: String, _model: Option<String>) -> Self { todo!() } }
-pub struct OpenAiProvider {}
-impl OpenAiProvider { pub fn new(_api_key: String, _model: Option<String>) -> Self { todo!() } }
-pub struct GeminiProvider {}
-impl GeminiProvider { pub fn new(_api_key: String, _model: Option<String>) -> Self { todo!() } }
-pub struct OllamaProvider {}
-impl OllamaProvider { pub fn new(_base_url: String, _model: String) -> Self { todo!() } }
+pub fn set_api_key(provider: &str, key: &str) -> anyhow::Result<()> {
+    keys::keyring_set(provider, key)
+}
 
 /// Output of the local decision layer for one user message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -106,20 +153,67 @@ pub struct LayaDecision {
 
 /// Intent labels the decider chooses from.
 pub const INTENTS: &[&str] = &[
-    "open_app", "window_control", "files", "shell", "system_control", "system_info",
-    "browser", "screen", "clipboard", "type_or_keys", "question", "multi_step_task",
+    "open_app",
+    "window_control",
+    "files",
+    "shell",
+    "system_control",
+    "system_info",
+    "browser",
+    "screen",
+    "clipboard",
+    "type_or_keys",
+    "question",
+    "multi_step_task",
 ];
 
-/// HTTP client for a local `laya-serve` (default http://127.0.0.1:8765).
-pub struct LayaClient {}
-impl LayaClient {
-    pub fn new(_base_url: String) -> Self { todo!() }
-    pub async fn healthy(&self) -> bool { todo!() }
-    /// Raw Jev-compatible call: POST /v1/systemone {state, questions} -> response json.
-    pub async fn system_one(&self, _state: &serde_json::Value, _questions: &serde_json::Value) -> anyhow::Result<serde_json::Value> { todo!() }
-    /// Ask intent / risk / sensitivity / needs_cloud in ONE forward pass.
-    pub async fn decide(&self, _text: &str) -> anyhow::Result<LayaDecision> { todo!() }
+/// Price table per 1M tokens (input, output) for cost accounting.
+/// Sources (2026-10-20): Anthropic model table (claude-api skill), developers.openai.com/api/docs/pricing,
+/// cloud.google.com Gemini pricing (3.6-3.8 Flash introductory price through 2026-12-31).
+/// Unknown cloud models fall back to a conservative (high) estimate so budgets err safe.
+pub fn price_per_mtok(brain: Brain, model: &str) -> (f64, f64) {
+    let m = model.to_ascii_lowercase();
+    let table: &[(&str, (f64, f64))] = match brain {
+        Brain::Rules | Brain::Laya | Brain::Local => return (0.0, 0.0),
+        Brain::Claude => &[
+            ("claude-fable", (10.0, 50.0)),
+            ("claude-mythos", (10.0, 50.0)),
+            ("claude-opus-5-5", (4.0, 20.0)),
+            ("claude-opus", (5.0, 25.0)),
+            ("claude-sonnet-5", (2.0, 10.0)),
+            ("claude-sonnet", (3.0, 15.0)),
+            ("claude-haiku", (1.0, 5.0)),
+            ("", (5.0, 25.0)),
+        ],
+        Brain::Openai => &[
+            ("gpt-6-luna", (0.10, 0.50)),
+            ("gpt-6", (2.0, 10.0)),
+            ("gpt-5.6-luna", (0.20, 1.20)),
+            ("gpt-5.4-nano", (0.20, 1.25)),
+            ("gpt-5.4-mini", (0.75, 4.50)),
+            ("gpt-5.4", (2.50, 15.0)),
+            ("gpt-5-nano", (0.05, 0.40)),
+            ("gpt-5-mini", (0.25, 2.0)),
+            ("gpt-5", (1.25, 10.0)),
+            ("gpt-4.1-nano", (0.10, 0.40)),
+            ("o4-mini", (1.10, 4.40)),
+            ("", (2.50, 15.0)),
+        ],
+        Brain::Gemini => &[
+            ("gemini-3.8-flash", (0.75, 3.75)),
+            ("gemini-3.7-flash", (0.75, 3.75)),
+            ("gemini-3.6-flash", (0.75, 3.75)),
+            ("gemini-3.5-flash", (1.50, 9.0)),
+            ("gemini-2.5-flash", (0.30, 2.50)),
+            ("", (1.50, 9.0)),
+        ],
+    };
+    table
+        .iter()
+        .find(|(p, _)| m.starts_with(p))
+        .map(|(_, v)| *v)
+        .unwrap_or((0.0, 0.0))
 }
 
-/// Price table per 1M tokens (input, output) for cost accounting.
-pub fn price_per_mtok(_brain: Brain, _model: &str) -> (f64, f64) { todo!() }
+#[cfg(test)]
+mod tests;
