@@ -257,6 +257,48 @@ fn kill_process(pid: u32) -> anyhow::Result<String> {
     }
 }
 
+/// Newest-first listing of finished downloads (Chrome's `.crdownload` partials are marked).
+fn list_downloads(dir: &Path, rel: Option<&str>, max: usize) -> String {
+    let mut files: Vec<(std::time::SystemTime, String, u64)> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let m = e.metadata().ok()?;
+            m.is_file().then(|| {
+                (
+                    m.modified().unwrap_or(std::time::UNIX_EPOCH),
+                    e.file_name().to_string_lossy().into_owned(),
+                    m.len(),
+                )
+            })
+        })
+        .collect();
+    if files.is_empty() {
+        return "No downloads yet.".into();
+    }
+    files.sort_by_key(|f| std::cmp::Reverse(f.0));
+    let mut s: String = files
+        .iter()
+        .take(max)
+        .map(|(_, name, len)| {
+            let state = if name.ends_with(".crdownload") {
+                " (still downloading)"
+            } else {
+                ""
+            };
+            match rel {
+                Some(r) => format!("{r}/{name} ({len} bytes){state}\n"),
+                None => format!("{name} ({len} bytes){state}\n"),
+            }
+        })
+        .collect();
+    if rel.is_none() {
+        s.push_str("(Saved outside the shared folders; add a Downloads shared folder to send them to the phone.)\n");
+    }
+    s
+}
+
 fn safe_url(u: &str) -> anyhow::Result<String> {
     let u = u.trim();
     let l = u.to_ascii_lowercase();
@@ -883,24 +925,47 @@ pub fn registry(ctx: BuiltinCtx) -> ToolRegistry {
 
     // ---------------- browser ----------------
     let profile = data_dir.join("browser-profile");
+    // Downloads go to a shared folder when possible so the phone can fetch them.
+    let (dl_dir, dl_rel): (PathBuf, Option<String>) = roots
+        .as_ref()
+        .and_then(|r| {
+            let name = r
+                .names()
+                .into_iter()
+                .find(|n| n.eq_ignore_ascii_case("Downloads"))?;
+            let p = r.resolve(&name, true).ok()?;
+            Some((p.join("AutoPilot"), Some(format!("{name}/AutoPilot"))))
+        })
+        .unwrap_or_else(|| (data_dir.join("downloads"), None));
     macro_rules! browser_tool {
         ($name:expr, $desc:expr, $schema:expr, $risk:expr, |$b:ident, $a:ident| $body:expr) => {{
             let lz = lazy.clone();
             let profile = profile.clone();
+            let dl = dl_dir.clone();
             r.add(
                 Tool::new($name, $desc, $schema, $risk, BROWSER).run_async(move |$a: Value| {
                     let lz = lz.clone();
                     let profile = profile.clone();
+                    let dl = dl.clone();
                     async move {
                         let $b = lz
                             .browser
-                            .get_or_try_init(|| agent_browser::Browser::launch(&profile, false))
+                            .get_or_try_init(|| async {
+                                let b = agent_browser::Browser::launch(&profile, false).await?;
+                                if let Err(e) = b.set_download_dir(&dl).await {
+                                    tracing::warn!("browser downloads disabled: {e}");
+                                }
+                                anyhow::Ok(b)
+                            })
                             .await?;
                         $body
                     }
                 }),
             );
         }};
+    }
+    fn page_line(p: &agent_browser::PageInfo) -> String {
+        format!("{} — {}", truncate(&p.title, 80), truncate(&p.url, 120))
     }
     browser_tool!(
         "browser.navigate",
@@ -909,8 +974,12 @@ pub fn registry(ctx: BuiltinCtx) -> ToolRegistry {
         Read,
         |b, a| {
             let url = safe_url(args::str(&a, "url")?)?;
-            let p = b.navigate(&url).await?;
-            Ok(ToolOutput::text(format!("Opened {} — {}", p.url, p.title)))
+            b.navigate(&url).await?;
+            b.settle().await;
+            Ok(ToolOutput::text(format!(
+                "Opened {}",
+                page_line(&b.info().await?)
+            )))
         }
     );
     browser_tool!(
@@ -952,7 +1021,10 @@ pub fn registry(ctx: BuiltinCtx) -> ToolRegistry {
         |b, a| {
             let i = args::i64(&a, "index")?.max(0) as usize;
             b.click_index(i).await?;
-            Ok(ToolOutput::text(format!("Clicked element {i}.")))
+            Ok(ToolOutput::text(format!(
+                "Clicked element {i}. Now on: {}",
+                page_line(&b.info().await?)
+            )))
         }
     );
     browser_tool!(
@@ -974,6 +1046,151 @@ pub fn registry(ctx: BuiltinCtx) -> ToolRegistry {
             Ok(ToolOutput::text(format!("Typed into element {i}.")))
         }
     );
+    browser_tool!(
+        "browser.select",
+        "Choose an option in a dropdown (by index from browser.elements) by its visible text.",
+        obj(
+            json!({"index": {"type":"integer"}, "option": {"type":"string"}}),
+            &["index", "option"]
+        ),
+        Write,
+        |b, a| {
+            let i = args::i64(&a, "index")?.max(0) as usize;
+            let chosen = b.select_index(i, args::str(&a, "option")?).await?;
+            Ok(ToolOutput::text(format!(
+                "Selected \"{chosen}\" in element {i}."
+            )))
+        }
+    );
+    browser_tool!(
+        "browser.key",
+        "Press a key in the browser's focused element: Enter, Escape, Tab, ArrowDown, ArrowUp, PageDown, Backspace.",
+        obj(json!({"key": {"type":"string"}}), &["key"]),
+        Write,
+        |b, a| {
+            let k = args::str(&a, "key")?.trim();
+            anyhow::ensure!(
+                !k.is_empty() && k.len() <= 20 && k.chars().all(|c| c.is_ascii_alphanumeric()),
+                "invalid key name"
+            );
+            b.press_key(k).await?;
+            Ok(ToolOutput::text(format!("Pressed {k}.")))
+        }
+    );
+    browser_tool!(
+        "browser.scroll",
+        "Scroll the page: up, down, top or bottom.",
+        obj(
+            json!({"direction": {"type":"string", "enum": ["up", "down", "top", "bottom"]}}),
+            &["direction"]
+        ),
+        Read,
+        |b, a| Ok(ToolOutput::text(
+            b.scroll(args::str(&a, "direction")?).await?
+        ))
+    );
+    browser_tool!(
+        "browser.history",
+        "Go back or forward in the browser history.",
+        obj(
+            json!({"direction": {"type":"string", "enum": ["back", "forward"]}}),
+            &["direction"]
+        ),
+        Read,
+        |b, a| {
+            let back = args::str(&a, "direction")? != "forward";
+            Ok(ToolOutput::text(format!(
+                "Now on: {}",
+                page_line(&b.history(back).await?)
+            )))
+        }
+    );
+    browser_tool!(
+        "browser.tabs",
+        "List the browser's open tabs (* marks the active one).",
+        obj(json!({}), &[]),
+        Read,
+        |b, _a| {
+            let s: String = b
+                .tabs()
+                .await?
+                .iter()
+                .enumerate()
+                .map(|(i, (p, active))| {
+                    format!("[{i}]{} {}\n", if *active { "*" } else { "" }, page_line(p))
+                })
+                .collect();
+            Ok(ToolOutput::text(s))
+        }
+    );
+    browser_tool!(
+        "browser.switch_tab",
+        "Make a tab (index from browser.tabs) the active one.",
+        obj(json!({"index": {"type":"integer"}}), &["index"]),
+        Read,
+        |b, a| {
+            let i = args::i64(&a, "index")?.max(0) as usize;
+            Ok(ToolOutput::text(format!(
+                "Now on: {}",
+                page_line(&b.switch_tab(i).await?)
+            )))
+        }
+    );
+    browser_tool!(
+        "browser.wait_for",
+        "Wait until text appears on the page (max 30 s).",
+        obj(
+            json!({"text": {"type":"string"}, "timeout_secs": {"type":"integer"}}),
+            &["text"]
+        ),
+        Read,
+        |b, a| {
+            let t = args::str(&a, "text")?;
+            let secs = args::opt_i64(&a, "timeout_secs").unwrap_or(10).clamp(1, 30) as u64;
+            let found = b
+                .wait_for_text(t, std::time::Duration::from_secs(secs))
+                .await?;
+            Ok(ToolOutput::text(if found {
+                format!("\"{t}\" is on the page.")
+            } else {
+                format!("\"{t}\" did not appear within {secs}s.")
+            }))
+        }
+    );
+    browser_tool!(
+        "browser.screenshot",
+        "Screenshot of the browser page, sent to the user's phone.",
+        obj(json!({}), &[]),
+        Read,
+        |b, _a| {
+            let jpeg = b.screenshot_jpeg(60).await?;
+            let (width, height) = agent_capture::jpeg_dimensions(&jpeg)?;
+            Ok(ToolOutput {
+                text: format!(
+                    "Browser screenshot ({width}x{height}) of {}",
+                    page_line(&b.info().await?)
+                ),
+                image: Some(super::Image {
+                    jpeg,
+                    width,
+                    height,
+                }),
+            })
+        }
+    );
+    {
+        let (dir, rel) = (dl_dir.clone(), dl_rel.clone());
+        r.add(
+            Tool::new(
+                "browser.downloads",
+                "Recent files the browser downloaded (newest first), with the path to send them to the phone.",
+                obj(json!({}), &[]),
+                Read,
+                BROWSER,
+            )
+            .blocking(move |_| Ok(ToolOutput::text(list_downloads(&dir, rel.as_deref(), 10)))),
+        );
+    }
 
     r
 }
@@ -1026,6 +1243,15 @@ mod tests {
             ("browser.elements", Read),
             ("browser.click", Write),
             ("browser.type", Write),
+            ("browser.select", Write),
+            ("browser.key", Write),
+            ("browser.scroll", Read),
+            ("browser.history", Read),
+            ("browser.tabs", Read),
+            ("browser.switch_tab", Read),
+            ("browser.wait_for", Read),
+            ("browser.screenshot", Read),
+            ("browser.downloads", Read),
             ("notify.local", Read),
         ];
         assert_eq!(r.len(), want.len());
@@ -1091,6 +1317,26 @@ mod tests {
         assert!(safe_url("javascript:alert(1)").is_err());
         assert!(safe_url("file:///etc/passwd").is_err());
         assert_eq!(safe_url("github.com").unwrap(), "https://github.com");
+    }
+
+    #[test]
+    fn downloads_listing() {
+        let d = std::env::temp_dir().join(format!("ap-dl-{}", uuid::Uuid::new_v4()));
+        assert_eq!(
+            list_downloads(&d, Some("Downloads/AutoPilot"), 5),
+            "No downloads yet."
+        );
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("old.pdf"), b"12").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(d.join("new.zip.crdownload"), b"1").unwrap();
+        let s = list_downloads(&d, Some("Downloads/AutoPilot"), 5);
+        assert_eq!(
+            s,
+            "Downloads/AutoPilot/new.zip.crdownload (1 bytes) (still downloading)\nDownloads/AutoPilot/old.pdf (2 bytes)\n"
+        );
+        assert!(list_downloads(&d, None, 1).contains("outside the shared folders"));
+        std::fs::remove_dir_all(&d).unwrap();
     }
 
     #[test]
