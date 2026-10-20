@@ -532,6 +532,17 @@ fn laya_questions_cover_all_intents() {
     assert_eq!(crit.len(), INTENTS.len());
     assert!(INTENTS.iter().all(|i| crit.contains_key(*i)));
     assert_eq!(q["needs_cloud"]["type"], "noul");
+    // Wire JSON keeps INTENTS order (Laya answers depend on option order).
+    let raw = laya::decide_questions_json();
+    let pos: Vec<usize> = INTENTS
+        .iter()
+        .map(|i| raw.find(&format!("\"{i}\":")).unwrap())
+        .collect();
+    assert!(
+        pos.windows(2).all(|w| w[0] < w[1]),
+        "intent options must keep order"
+    );
+    assert!(raw.find("\"read\"").unwrap() < raw.find("\"destructive\"").unwrap());
 }
 
 #[tokio::test]

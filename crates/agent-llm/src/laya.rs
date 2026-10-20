@@ -42,26 +42,78 @@ const INTENT_CRITERIA: &[(&str, &str)] = &[
     ("multi_step_task", "several steps, or write content"),
 ];
 
-/// The question set sent by [`LayaClient::decide`].
+type Criteria = &'static [(&'static str, &'static str)];
+
+const QUESTIONS: &[(&str, &str, &str, Criteria)] = &[
+    (
+        "intent",
+        "choice",
+        "Which kind of laptop action is requested?",
+        INTENT_CRITERIA,
+    ),
+    (
+        "risk",
+        "choice",
+        "What is the worst effect of doing this on the laptop?",
+        &[
+            ("read", "only reads or shows information"),
+            ("write", "changes something reversible"),
+            ("destructive", "deletes, overwrites, sends or pays"),
+        ],
+    ),
+    (
+        "sensitivity",
+        "choice",
+        "How sensitive is the data involved?",
+        &[
+            ("low", "ordinary harmless information"),
+            ("medium", "personal files or work documents"),
+            ("high", "passwords, keys, money, health, private messages"),
+        ],
+    ),
+    (
+        "needs_cloud",
+        "noul",
+        "Does this need a smart assistant to write long text, write code, plan many steps, or reason deeply?",
+        &[],
+    ),
+];
+
+/// The question set sent by [`LayaClient::decide`], serialized with option order preserved.
+/// Order matters: Laya's answers shift when choice options are reordered, and
+/// `serde_json::Map` (without `preserve_order`) would sort them alphabetically.
+pub fn decide_questions_json() -> &'static str {
+    static Q: OnceLock<String> = OnceLock::new();
+    Q.get_or_init(|| {
+        let s = |x: &str| serde_json::to_string(x).unwrap_or_default();
+        let qs: Vec<String> = QUESTIONS
+            .iter()
+            .map(|(id, ty, instr, crit)| {
+                let mut q = format!(
+                    "{}:{{\"type\":{},\"instructions\":{}",
+                    s(id),
+                    s(ty),
+                    s(instr)
+                );
+                if !crit.is_empty() {
+                    let c: Vec<String> = crit
+                        .iter()
+                        .map(|(k, d)| format!("{}:{}", s(k), s(d)))
+                        .collect();
+                    q.push_str(&format!(",\"criteria\":{{{}}}", c.join(",")));
+                }
+                q.push('}');
+                q
+            })
+            .collect();
+        format!("{{{}}}", qs.join(","))
+    })
+}
+
+/// [`decide_questions_json`] parsed (key order is not preserved in a `Value`).
 pub fn decide_questions() -> &'static Value {
     static Q: OnceLock<Value> = OnceLock::new();
-    Q.get_or_init(|| {
-        debug_assert_eq!(INTENT_CRITERIA.len(), INTENTS.len());
-        let intents: serde_json::Map<String, Value> =
-            INTENT_CRITERIA.iter().map(|(k, d)| ((*k).to_owned(), json!(d))).collect();
-        json!({
-            "intent": {"type": "choice", "instructions": "Which kind of laptop action is requested?", "criteria": intents},
-            "risk": {"type": "choice", "instructions": "What is the worst effect of doing this on the laptop?", "criteria": {
-                "read": "only reads or shows information",
-                "write": "changes something reversible",
-                "destructive": "deletes, overwrites, sends or pays"}},
-            "sensitivity": {"type": "choice", "instructions": "How sensitive is the data involved?", "criteria": {
-                "low": "ordinary harmless information",
-                "medium": "personal files or work documents",
-                "high": "passwords, keys, money, health, private messages"}},
-            "needs_cloud": {"type": "noul", "instructions": "Does this need a smart assistant to write long text, write code, plan many steps, or reason deeply?"},
-        })
-    })
+    Q.get_or_init(|| serde_json::from_str(decide_questions_json()).unwrap_or(Value::Null))
 }
 
 /// HTTP client for a local `laya-serve` (default http://127.0.0.1:8765).
@@ -125,15 +177,21 @@ impl LayaClient {
     }
 
     pub async fn system_one(&self, state: &Value, questions: &Value) -> anyhow::Result<Value> {
+        self.post(json!({"state": state, "questions": questions}).to_string())
+            .await
+    }
+
+    async fn post(&self, body: String) -> anyhow::Result<Value> {
         let url = format!("{}/v1/systemone", self.base_url);
-        let body = json!({"state": state, "questions": questions});
         let policy = RetryPolicy {
             retries: 1,
             base: Duration::from_millis(100),
             max: Duration::from_millis(500),
         };
         let resp = http::send_with_retry(policy, "laya", || {
-            self.auth(self.client.post(&url)).json(&body)
+            self.auth(self.client.post(&url))
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .body(body.clone())
         })
         .await?;
         resp.json().await.context("laya: invalid JSON response")
@@ -141,9 +199,12 @@ impl LayaClient {
 
     pub async fn decide(&self, text: &str) -> anyhow::Result<LayaDecision> {
         let t0 = Instant::now();
-        let resp = self
-            .system_one(&json!({"request": text}), decide_questions())
-            .await?;
+        let body = format!(
+            "{{\"state\":{},\"questions\":{}}}",
+            json!({"request": text}),
+            decide_questions_json()
+        );
+        let resp = self.post(body).await?;
         let mut d = parse_decision(&resp)?;
         d.latency_ms = t0.elapsed().as_millis() as u64;
         Ok(d)
