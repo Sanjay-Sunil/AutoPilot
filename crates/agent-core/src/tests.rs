@@ -628,3 +628,64 @@ async fn streams_deltas() {
     let m = h.next_until(|m| matches!(m, Message::ChatAgent(_))).await;
     assert!(matches!(m, Message::ChatAgent(c) if !c.final_ && c.text == "hello there"));
 }
+
+#[tokio::test]
+async fn follow_up_sees_previous_exchange() {
+    let llm = FakeLlm::new(
+        Brain::Claude,
+        vec![
+            text("GitHub wants a 2FA code. Send it to me."),
+            text("Signed in."),
+            text("ok"),
+        ],
+    );
+    let mut h = harness(vec![llm.clone()], None);
+    h.chat("explain my github notifications").await;
+    h.final_reply().await;
+    h.final_state().await;
+    h.chat("the code is 482913").await;
+    assert_eq!(h.final_reply().await.0, "Signed in.");
+    h.final_state().await;
+    {
+        let seen = llm.seen.lock().unwrap();
+        let m = &seen[1].messages;
+        assert_eq!(m.len(), 3, "{m:?}");
+        assert_eq!(m[0].content, "explain my github notifications");
+        assert_eq!(m[1].role, Role::Assistant);
+        assert!(m[1].content.contains("2FA"));
+        assert_eq!(m[2].content, "the code is 482913");
+    }
+    h.chat("New chat.").await;
+    assert!(h.final_reply().await.0.contains("new chat"));
+    h.final_state().await;
+    h.chat("explain tides").await;
+    h.final_reply().await;
+    assert_eq!(llm.seen.lock().unwrap()[2].messages.len(), 1);
+}
+
+#[tokio::test]
+async fn sensitive_exchange_not_replayed_to_cloud() {
+    let llm = FakeLlm::new(
+        Brain::Claude,
+        vec![
+            call("clipboard.get", json!({})),
+            text("Your clipboard has a password-like string."),
+            text("ok"),
+        ],
+    );
+    let mut h = harness(vec![llm.clone()], None);
+    h.chat("look at what I copied and then explain it").await;
+    h.final_reply().await;
+    h.final_reply().await;
+    h.final_state().await;
+    h.chat("explain how tides work").await;
+    h.final_reply().await;
+    let seen = llm.seen.lock().unwrap();
+    let last = seen.last().unwrap();
+    assert_eq!(last.messages.len(), 1, "{:?}", last.messages);
+    assert!(
+        !serde_json::to_string(&last.messages)
+            .unwrap()
+            .contains("password-like")
+    );
+}

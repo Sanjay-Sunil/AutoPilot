@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 
 pub mod approvals;
 pub mod config;
+pub mod memory;
 pub mod router;
 pub mod rules;
 pub mod screen;
@@ -121,6 +122,7 @@ pub(crate) struct Inner {
     pub(crate) laya_down_until: AtomicU64,
     pub(crate) system_prompt: String,
     transfers: Transfers,
+    pub(crate) memory: memory::Memory,
 }
 
 impl Inner {
@@ -234,6 +236,7 @@ impl Agent {
                 outs: Mutex::new(vec![]),
                 laya_down_until: AtomicU64::new(0),
                 transfers: Transfers::default(),
+                memory: memory::Memory::default(),
             }),
         }
     }

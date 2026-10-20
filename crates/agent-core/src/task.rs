@@ -32,6 +32,8 @@ pub struct Task {
     title: Mutex<String>,
     steps: Mutex<Vec<TaskStep>>,
     allowed_for_task: Mutex<HashSet<String>>,
+    /// A high-sensitivity tool result was produced during this task.
+    pub saw_high: std::sync::atomic::AtomicBool,
 }
 
 impl Task {
@@ -49,6 +51,7 @@ impl Task {
             title: Mutex::new(title.to_string()),
             steps: Mutex::new(vec![]),
             allowed_for_task: Mutex::new(HashSet::new()),
+            saw_high: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -338,7 +341,12 @@ pub(crate) async fn agent_loop(
     let cloud = is_cloud(brain);
     let allow_high = inner.policy.read().unwrap().cloud_allow_high_sensitivity;
     let tools = inner.parts.tools.specs_for(Some(intent));
-    let mut history = vec![Msg::user(text)];
+    let mut history = vec![];
+    for (u, a) in inner.memory.recent(&task.actor, !cloud || allow_high) {
+        history.push(Msg::user(u));
+        history.push(Msg::assistant(a, vec![]));
+    }
+    history.push(Msg::user(text));
     let mut progressed = false;
     for _ in 0..inner.cfg.max_agent_steps {
         if task.cancel.is_cancelled() {
@@ -392,6 +400,9 @@ pub(crate) async fn agent_loop(
                 return Err(LoopError::Cancelled);
             }
             let mut content = r.text;
+            if r.sensitivity == Sensitivity::High {
+                task.saw_high.store(true, Ordering::Relaxed);
+            }
             if cloud && r.sensitivity == Sensitivity::High && !allow_high {
                 // Show the user directly; the cloud model only learns that it was delivered.
                 task.say(&content, Brain::Rules).await;
@@ -438,7 +449,19 @@ pub(crate) async fn run_task(
     }
 }
 
+const RESET_PHRASES: &[&str] = &["new chat", "forget that", "forget everything", "reset chat"];
+
 async fn pipeline(inner: &Inner, task: &Task, text: &str) -> TaskState {
+    let norm = text.trim().trim_end_matches(['.', '!']).to_lowercase();
+    if RESET_PHRASES.contains(&norm.as_str()) {
+        inner.memory.clear();
+        task.say(
+            "Started a new chat; earlier messages are forgotten.",
+            Brain::Rules,
+        )
+        .await;
+        return TaskState::Done;
+    }
     // a. Rules fast path.
     if let Some(a) = rules::parse(text)
         && inner.parts.tools.get(a.tool).is_some()
@@ -519,6 +542,9 @@ async fn pipeline(inner: &Inner, task: &Task, text: &str) -> TaskState {
     for p in candidates {
         match agent_loop(inner, task, &p, &d.intent, text).await {
             Ok(reply) => {
+                let high =
+                    d.sensitivity == Sensitivity::High || task.saw_high.load(Ordering::Relaxed);
+                inner.memory.push(&task.actor, text, &reply, high);
                 task.say(&reply, p.brain()).await;
                 return TaskState::Done;
             }
