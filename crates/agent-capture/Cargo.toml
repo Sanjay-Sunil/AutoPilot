@@ -10,3 +10,17 @@ agent-protocol = { version = "0.1.0", path = "../agent-protocol" }
 anyhow = "1.0.104"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+
+# X11 capture on Linux pulls pipewire/xcb/zbus via xcap; opt-in to keep the default
+# (Wayland/grim) build small and fast. Windows always gets xcap.
+[target.'cfg(target_os = "linux")'.dependencies]
+xcap = { version = "0.9.8", default-features = false, optional = true }
+image = { version = "0.25.9", default-features = false, features = ["jpeg"], optional = true }
+
+[target.'cfg(windows)'.dependencies]
+xcap = { version = "0.9.8", default-features = false }
+image = { version = "0.25.9", default-features = false, features = ["jpeg"] }
+
+[features]
+default = []
+x11 = ["dep:xcap", "dep:image"]
