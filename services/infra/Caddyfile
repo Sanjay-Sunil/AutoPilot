@@ -1,0 +1,19 @@
+# Set DOMAIN in .env (e.g. relay.example.com). Caddy obtains TLS certs automatically and proxies
+# WebSocket upgrades transparently. Access logs are off (they would record room ids and IPs).
+{$DOMAIN:relay.example.com} {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		-Server
+	}
+	handle /health {
+		reverse_proxy backend:8080
+	}
+	handle /relay/* {
+		reverse_proxy backend:8080
+	}
+	handle {
+		respond 404
+	}
+}

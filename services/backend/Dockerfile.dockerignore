@@ -1,0 +1,8 @@
+# Dockerfile-specific ignore (BuildKit). Context is the repo root.
+target
+**/target
+apps
+**/node_modules
+.git
+.env
+rust-toolchain.toml
