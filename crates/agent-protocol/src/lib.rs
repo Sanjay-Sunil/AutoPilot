@@ -33,7 +33,13 @@ pub struct Envelope {
 
 impl Envelope {
     pub fn new(session: Uuid, seq: u64, msg: Message) -> Self {
-        Self { v: PROTOCOL_VERSION, id: Uuid::new_v4(), session, seq, msg }
+        Self {
+            v: PROTOCOL_VERSION,
+            id: Uuid::new_v4(),
+            session,
+            seq,
+            msg,
+        }
     }
 
     pub fn to_json(&self) -> Vec<u8> {
@@ -41,7 +47,8 @@ impl Envelope {
     }
 
     pub fn from_json(bytes: &[u8]) -> Result<Self, ProtocolError> {
-        let env: Envelope = serde_json::from_slice(bytes).map_err(|e| ProtocolError::Malformed(e.to_string()))?;
+        let env: Envelope =
+            serde_json::from_slice(bytes).map_err(|e| ProtocolError::Malformed(e.to_string()))?;
         if env.v != PROTOCOL_VERSION {
             return Err(ProtocolError::UnsupportedVersion(env.v));
         }
@@ -63,7 +70,9 @@ impl std::fmt::Display for ProtocolError {
         match self {
             Self::Malformed(e) => write!(f, "malformed message: {e}"),
             Self::UnsupportedVersion(v) => write!(f, "unsupported protocol version {v}"),
-            Self::Replay { last, got } => write!(f, "replayed or reordered seq {got} (last {last})"),
+            Self::Replay { last, got } => {
+                write!(f, "replayed or reordered seq {got} (last {last})")
+            }
         }
     }
 }
@@ -486,7 +495,14 @@ mod tests {
 
     #[test]
     fn envelope_shape_matches_spec() {
-        let env = Envelope::new(Uuid::nil(), 42, Message::ChatUser(ChatUser { text: "hi".into(), voice: false }));
+        let env = Envelope::new(
+            Uuid::nil(),
+            42,
+            Message::ChatUser(ChatUser {
+                text: "hi".into(),
+                voice: false,
+            }),
+        );
         let v: serde_json::Value = serde_json::from_slice(&env.to_json()).unwrap();
         assert_eq!(v["v"], 1);
         assert_eq!(v["seq"], 42);
@@ -499,39 +515,115 @@ mod tests {
     #[test]
     fn all_messages_roundtrip() {
         let id = Uuid::new_v4();
-        roundtrip(Message::PairClaim(PairClaim { token: "t".into(), device_name: "Pixel".into() }));
-        roundtrip(Message::PairResult(PairResult { ok: true, laptop_name: "lap".into(), reason: None }));
-        roundtrip(Message::ChatUser(ChatUser { text: "open firefox".into(), voice: true }));
-        roundtrip(Message::ApprovalResponse(ApprovalResponse { approval_id: id, decision: ApprovalDecision::ApproveForTask }));
-        roundtrip(Message::ScreenRequest(ScreenRequest { action: ScreenAction::Snapshot, max_width: Some(720), fps: None, quality: Some(50) }));
-        roundtrip(Message::FileOffer(FileOffer { transfer_id: id, name: "a.txt".into(), size: 3, sha256: "ab".into() }));
-        roundtrip(Message::FileAccept(FileAccept { transfer_id: id, offset: 0 }));
-        roundtrip(Message::FileRequest(FileRequest { path: "Documents/a".into() }));
+        roundtrip(Message::PairClaim(PairClaim {
+            token: "t".into(),
+            device_name: "Pixel".into(),
+        }));
+        roundtrip(Message::PairResult(PairResult {
+            ok: true,
+            laptop_name: "lap".into(),
+            reason: None,
+        }));
+        roundtrip(Message::ChatUser(ChatUser {
+            text: "open firefox".into(),
+            voice: true,
+        }));
+        roundtrip(Message::ApprovalResponse(ApprovalResponse {
+            approval_id: id,
+            decision: ApprovalDecision::ApproveForTask,
+        }));
+        roundtrip(Message::ScreenRequest(ScreenRequest {
+            action: ScreenAction::Snapshot,
+            max_width: Some(720),
+            fps: None,
+            quality: Some(50),
+        }));
+        roundtrip(Message::FileOffer(FileOffer {
+            transfer_id: id,
+            name: "a.txt".into(),
+            size: 3,
+            sha256: "ab".into(),
+        }));
+        roundtrip(Message::FileAccept(FileAccept {
+            transfer_id: id,
+            offset: 0,
+        }));
+        roundtrip(Message::FileRequest(FileRequest {
+            path: "Documents/a".into(),
+        }));
         roundtrip(Message::ControlKill(ControlKill { reason: None }));
         roundtrip(Message::SettingsUpdate(SettingsUpdate::default()));
         roundtrip(Message::Ping(Ping { t_ms: 1 }));
         roundtrip(Message::Pong(Ping { t_ms: 1 }));
-        roundtrip(Message::ChatAgent(ChatAgent { task_id: id, text: "ok".into(), final_: true, brain: Brain::Laya }));
+        roundtrip(Message::ChatAgent(ChatAgent {
+            task_id: id,
+            text: "ok".into(),
+            final_: true,
+            brain: Brain::Laya,
+        }));
         roundtrip(Message::TaskUpdate(TaskUpdate {
             task_id: id,
             title: "t".into(),
             state: TaskState::WaitingApproval,
-            steps: vec![TaskStep { tool: "fs.list".into(), summary: "list".into(), state: TaskState::Done, brain: Brain::Rules, risk: RiskTier::Read, output: None }],
+            steps: vec![TaskStep {
+                tool: "fs.list".into(),
+                summary: "list".into(),
+                state: TaskState::Done,
+                brain: Brain::Rules,
+                risk: RiskTier::Read,
+                output: None,
+            }],
         }));
-        roundtrip(Message::ApprovalRequest(ApprovalRequest { approval_id: id, task_id: id, tool: "shell".into(), summary: "rm".into(), risk: RiskTier::Destructive, preview: Some("rm x".into()), expires_at_ms: 9 }));
-        roundtrip(Message::ScreenState(ScreenState { active: true, reason: "on_demand".into() }));
-        roundtrip(Message::ScreenFrame(ScreenFrame { frame_id: 1, part: 0, parts: 1, width: 2, height: 2, data_b64: "AA".into() }));
-        roundtrip(Message::Notify(Notify { level: NotifyLevel::Warn, text: "x".into() }));
-        roundtrip(Message::FileChunk(FileChunk { transfer_id: id, offset: 0, data_b64: "AA".into() }));
-        roundtrip(Message::FileDone(FileDone { transfer_id: id, ok: true, sha256: "ab".into(), reason: None }));
-        roundtrip(Message::Error(ErrorMsg { code: "e".into(), message: "m".into() }));
+        roundtrip(Message::ApprovalRequest(ApprovalRequest {
+            approval_id: id,
+            task_id: id,
+            tool: "shell".into(),
+            summary: "rm".into(),
+            risk: RiskTier::Destructive,
+            preview: Some("rm x".into()),
+            expires_at_ms: 9,
+        }));
+        roundtrip(Message::ScreenState(ScreenState {
+            active: true,
+            reason: "on_demand".into(),
+        }));
+        roundtrip(Message::ScreenFrame(ScreenFrame {
+            frame_id: 1,
+            part: 0,
+            parts: 1,
+            width: 2,
+            height: 2,
+            data_b64: "AA".into(),
+        }));
+        roundtrip(Message::Notify(Notify {
+            level: NotifyLevel::Warn,
+            text: "x".into(),
+        }));
+        roundtrip(Message::FileChunk(FileChunk {
+            transfer_id: id,
+            offset: 0,
+            data_b64: "AA".into(),
+        }));
+        roundtrip(Message::FileDone(FileDone {
+            transfer_id: id,
+            ok: true,
+            sha256: "ab".into(),
+            reason: None,
+        }));
+        roundtrip(Message::Error(ErrorMsg {
+            code: "e".into(),
+            message: "m".into(),
+        }));
     }
 
     #[test]
     fn rejects_bad_version_and_garbage() {
         assert!(Envelope::from_json(b"not json").is_err());
         let bad = br#"{"v":9,"id":"00000000-0000-0000-0000-000000000000","session":"00000000-0000-0000-0000-000000000000","seq":1,"type":"ping","payload":{"t_ms":1}}"#;
-        assert!(matches!(Envelope::from_json(bad), Err(ProtocolError::UnsupportedVersion(9))));
+        assert!(matches!(
+            Envelope::from_json(bad),
+            Err(ProtocolError::UnsupportedVersion(9))
+        ));
         let unknown = br#"{"v":1,"id":"00000000-0000-0000-0000-000000000000","session":"00000000-0000-0000-0000-000000000000","seq":1,"type":"evil.cmd","payload":{}}"#;
         assert!(Envelope::from_json(unknown).is_err());
     }

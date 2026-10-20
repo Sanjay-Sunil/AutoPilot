@@ -103,6 +103,8 @@ pub struct MonitorInfo {
     pub logical_width: f64,
     /// Native output scale; capturing above this would upscale.
     pub scale: f64,
+    /// False while the output is in DPMS-off (display asleep); screencopy would stall.
+    pub dpms_on: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -118,6 +120,12 @@ struct HyprMonitor {
     focused: bool,
     #[serde(default)]
     disabled: bool,
+    #[serde(default = "yes", rename = "dpmsStatus")]
+    dpms_status: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 fn one() -> f64 {
@@ -141,6 +149,7 @@ pub fn parse_focused_monitor(json: &[u8]) -> Option<MonitorInfo> {
         name: m.name.clone(),
         logical_width: px_w / scale,
         scale,
+        dpms_on: m.dpms_status,
     })
 }
 
@@ -242,6 +251,12 @@ impl ScreenCapturer for GrimCapturer {
         };
         let jpeg = match &mon {
             Some(m) => {
+                if !m.dpms_on {
+                    anyhow::bail!(
+                        "display {} is asleep (DPMS off); wake it before capturing",
+                        m.name
+                    );
+                }
                 let s = grim_scale(m.logical_width, m.scale, max_width);
                 run_grim(&grim_args(Some(&m.name), quality, Some(s)))?
             }
@@ -358,6 +373,14 @@ mod tests {
     ]"#;
 
     #[test]
+    fn reads_dpms_status() {
+        let asleep =
+            br#"[{"name":"eDP-1","width":1920,"height":1080,"focused":true,"dpmsStatus":false}]"#;
+        assert!(!parse_focused_monitor(asleep).unwrap().dpms_on);
+        assert!(parse_focused_monitor(MONITORS.as_bytes()).unwrap().dpms_on);
+    }
+
+    #[test]
     fn parses_focused_monitor() {
         let m = parse_focused_monitor(MONITORS.as_bytes()).unwrap();
         assert_eq!(m.name, "DP-2");
@@ -404,6 +427,10 @@ mod tests {
     fn live_capture_hyprland() {
         if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_none() || !which("grim") {
             eprintln!("skipping: not in Hyprland");
+            return;
+        }
+        if focused_hypr_monitor().is_some_and(|m| !m.dpms_on) {
+            eprintln!("skipping: display asleep (DPMS off)");
             return;
         }
         let cap = detect();
