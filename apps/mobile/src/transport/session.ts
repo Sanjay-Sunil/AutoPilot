@@ -11,6 +11,8 @@ export const PROLOGUE = utf8Encode("autopilot/1");
 export const PING_INTERVAL_MS = 25_000;
 export const SILENCE_TIMEOUT_MS = 60_000;
 export const CONNECT_TIMEOUT_MS = 8_000;
+/** After the handshake we ping at once; no reply within this window = dead session (relay goes silent). */
+export const FIRST_REPLY_TIMEOUT_MS = 10_000;
 
 /** The subset of the WebSocket API we use (RN global WebSocket satisfies it). */
 export interface WebSocketLike {
@@ -46,6 +48,7 @@ export interface SessionOptions {
   connectTimeoutMs?: number;
   pingIntervalMs?: number;
   silenceTimeoutMs?: number;
+  firstReplyTimeoutMs?: number;
   now?: () => number;
 }
 
@@ -78,6 +81,7 @@ export class SecureSession {
   private readonly guard = new SeqGuard();
   private readonly frames = new FrameAssembler();
   private pingTimer: ReturnType<typeof setInterval> | null = null;
+  private firstReplyTimer: ReturnType<typeof setTimeout> | null = null;
   private lastRx = 0;
   private closed = false;
   private open_ = false;
@@ -187,6 +191,10 @@ export class SecureSession {
         ws.onerror = () => this.teardown("network error");
         ws.onclose = (c) => this.teardown(c.reason || `connection closed (${c.code ?? "?"})`, c.code);
         if (this.opts.claim) this.send({ type: "pair.claim", payload: this.opts.claim });
+        // Paired laptops send nothing after the handshake: ping now to learn the session id and to
+        // detect a session the laptop rejected (over the relay it just goes silent).
+        this.send({ type: "ping", payload: { t_ms: this.now() } });
+        this.firstReplyTimer = setTimeout(() => this.teardown("no reply from laptop after handshake"), this.opts.firstReplyTimeoutMs ?? FIRST_REPLY_TIMEOUT_MS);
         this.startPing();
         this.h.onOpen?.({ url, code: confirmationCode(t.handshakeHash), handshakeHash: t.handshakeHash });
         resolve();
@@ -205,6 +213,7 @@ export class SecureSession {
     }
     if (!this.guard.accept(env.seq)) return this.teardown("replayed message");
     this.lastRx = this.now();
+    this.clearFirstReply();
     if (this.writer.session !== env.session && /^[0-9a-f-]{36}$/i.test(env.session)) this.writer.session = env.session;
     if (env.type === "pong") return;
     if (env.type === "screen.frame") {
@@ -213,6 +222,11 @@ export class SecureSession {
       return;
     }
     this.h.onMessage?.(env);
+  }
+
+  private clearFirstReply(): void {
+    if (this.firstReplyTimer) clearTimeout(this.firstReplyTimer);
+    this.firstReplyTimer = null;
   }
 
   private startPing(): void {
@@ -234,6 +248,7 @@ export class SecureSession {
     this.open_ = false;
     if (this.pingTimer) clearInterval(this.pingTimer);
     this.pingTimer = null;
+    this.clearFirstReply();
     const ws = this.ws;
     this.ws = null;
     if (ws && !wasOpen && ws.onclose) {

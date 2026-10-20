@@ -93,7 +93,8 @@ describe("SecureSession", () => {
     expect(s.sessionId).toBe(l.writer.session);
 
     s.send({ type: "chat.user", payload: { text: "hi", voice: false } });
-    expect(l.received[1]).toMatchObject({ type: "chat.user", seq: 2, session: l.writer.session });
+    expect(l.received[1]).toMatchObject({ type: "ping", seq: 2 });
+    expect(l.received[2]).toMatchObject({ type: "chat.user", seq: 3, session: l.writer.session });
 
     const b64 = toBase64(Uint8Array.from({ length: 30 }, (_, i) => i));
     l.push(l.writer.next({ type: "screen.frame", payload: { frame_id: 1, part: 1, parts: 2, width: 1, height: 1, data_b64: b64.slice(20) } }));
@@ -112,6 +113,27 @@ describe("SecureSession", () => {
       wsFactory: () => new FakeLaptop(laptopKey),
     });
     await expect(s.start()).rejects.toThrow(/does not match/);
+  });
+
+  it("sends ping right after handshake and fails if the laptop stays silent", async () => {
+    const laptopKey = generateKeyPair();
+    let laptop: FakeLaptop | null = null;
+    let closed = "";
+    const s = new SecureSession(
+      {
+        urls: ["ws://ok/ws"],
+        deviceKey: generateKeyPair(),
+        laptopPk: laptopKey.publicKey,
+        random: randomBytes,
+        firstReplyTimeoutMs: 20,
+        wsFactory: () => (laptop = new FakeLaptop(laptopKey)),
+      },
+      { onClose: (r) => (closed = r) },
+    );
+    await s.start();
+    expect(laptop!.received[0]).toMatchObject({ type: "ping", seq: 1 });
+    await new Promise((r) => setTimeout(r, 40));
+    expect(closed).toMatch(/no reply/);
   });
 
   it("closes on replayed message", async () => {

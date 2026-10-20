@@ -61,6 +61,6 @@ This is fine because every frame is a Noise message; TLS (`wss://`) is used for 
 
 - Connection is open only while the app is in the foreground; backgrounding closes it (battery).
   Reconnect uses jittered exponential backoff. Relay close code 4000 (replaced by a newer phone) does not reconnect.
-- Ping every 25 s; the session closes after 60 s of silence. Inbound `seq` replays close the session.
+- A ping is sent right after the handshake (learns the session id); no reply within 10 s = failed session, reconnect. Then ping every 25 s; the session closes after 60 s of silence. Inbound `seq` replays close the session.
 - Screen frames only flow on demand: Snapshot, or Live (2 fps), which stops when you leave the tab.
 - Destructive approvals require biometric/device-passcode confirmation before `approve` is sent.
