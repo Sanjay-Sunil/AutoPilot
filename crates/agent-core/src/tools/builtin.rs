@@ -195,7 +195,12 @@ fn process_list(limit: usize) -> String {
     s.refresh_processes_specifics(ProcessesToUpdate::All, true, kind);
     std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
     s.refresh_processes_specifics(ProcessesToUpdate::All, true, kind);
-    let mut v: Vec<_> = s.processes().values().collect();
+    // On Linux sysinfo also lists threads as tasks; keep real processes only.
+    let mut v: Vec<_> = s
+        .processes()
+        .values()
+        .filter(|p| p.thread_kind().is_none())
+        .collect();
     v.sort_by(|a, b| {
         b.cpu_usage()
             .partial_cmp(&a.cpu_usage())
