@@ -1,0 +1,70 @@
+{
+  "confirmation_code": "831271",
+  "confirmation_code_formula": "u32_be(BLAKE2s-256(handshake_hash)[0..4]) % 1000000, zero-padded to 6 digits",
+  "description": "AutoPilot Noise XX vector. Phone = initiator, laptop = responder. All handshake payloads empty. Transport messages use nonce 0 in each direction. Keys are X25519 private scalars (unclamped bytes as stored; clamping happens inside X25519).",
+  "handshake": [
+    {
+      "from": "initiator",
+      "message_hex": "ca35def5ae56cec33dc2036731ab14896bc4c75dbb07a61f879f8e3afa4c7944",
+      "payload_hex": ""
+    },
+    {
+      "from": "responder",
+      "message_hex": "95ebc60d2b1fa672c1f46a8aa265ef51bfe38e7ccb39ec5be34069f1448088437c365eb362a1c991b0557fe8a7fb187d99346765d93ec63db6c1b01504ebeec5a5fe365d5cef95471c790408343dfdc8bd373cf5b9aaaf721c542df032915784",
+      "payload_hex": ""
+    },
+    {
+      "from": "initiator",
+      "message_hex": "46c3307de83b014258717d97781c1f50936d8b7d50c0722a1739654d10392d414661425704bdcbbd60d5f5dabb31b48a81f34906918be46759648da0cffd8900",
+      "payload_hex": ""
+    }
+  ],
+  "handshake_hash_hex": "2be96ec85bbbf4e0cd4d5ccf2f82b513089ce42b69746e8fec81066883bf9381",
+  "initiator": {
+    "ephemeral_private_hex": "893e28b9dc6ca8d611ab664754b8ceb7bac5117349a4439a6b0569da977c464a",
+    "role": "phone",
+    "static_private_hex": "e61ef9919cde45dd5f82166404bd08e38bceb5dfdfded0a34c8df7ed542214d1",
+    "static_public_b64url": "a8OCKiqn9OaYHWU4aSs83z5t-e6m7SaetB2TwidXt1o",
+    "static_public_hex": "6bc3822a2aa7f4e6981d6538692b3cdf3e6df9eea6ed269eb41d93c22757b75a"
+  },
+  "pairing_qr": {
+    "json": {
+      "addrs": [
+        "192.168.1.20:7878"
+      ],
+      "expires_at_ms": 1760000000000,
+      "laptop_name": "zxnj-laptop",
+      "laptop_pk": "MeAwP9ZBjS-MDni5HyLoyu0Pvkhlbc9HZ-SDT3Abj2I",
+      "relay": "wss://relay.example/relay",
+      "token": "AAECAwQFBgcICQoLDA0ODw",
+      "v": 1
+    },
+    "uri": "autopilot://pair?d=eyJ2IjoxLCJhZGRycyI6WyIxOTIuMTY4LjEuMjA6Nzg3OCJdLCJyZWxheSI6IndzczovL3JlbGF5LmV4YW1wbGUvcmVsYXkiLCJsYXB0b3BfcGsiOiJNZUF3UDlaQmpTLU1Ebmk1SHlMb3l1MFB2a2hsYmM5SFotU0RUM0FiajJJIiwibGFwdG9wX25hbWUiOiJ6eG5qLWxhcHRvcCIsInRva2VuIjoiQUFFQ0F3UUZCZ2NJQ1FvTERBME9EdyIsImV4cGlyZXNfYXRfbXMiOjE3NjAwMDAwMDAwMDB9"
+  },
+  "prologue_ascii": "autopilot/1",
+  "prologue_hex": "6175746f70696c6f742f31",
+  "protocol_name": "Noise_XX_25519_ChaChaPoly_BLAKE2s",
+  "relay_room": "78ccfaf55344c34a6a2ff8e24b0ae6fd",
+  "relay_room_formula": "hex(BLAKE2s-256(laptop_static_pk))[0..32]",
+  "responder": {
+    "ephemeral_private_hex": "bbdb4cdbd309f1a1f2e1456967fe288cadd6f712d65dc7b7793d5e63da6b375b",
+    "role": "laptop",
+    "static_private_hex": "4a3acbfdb163dec651dfa3194dece676d437029c62a408b4c5ea9114246e4893",
+    "static_public_b64url": "MeAwP9ZBjS-MDni5HyLoyu0Pvkhlbc9HZ-SDT3Abj2I",
+    "static_public_hex": "31e0303fd6418d2f8c0e78b91f22e8caed0fbe48656dcf4767e4834f701b8f62"
+  },
+  "transport": [
+    {
+      "ciphertext_hex": "e045de4e8c6c189595f830f430219aecd4eb2f6c3e22e3e453c9f20e8edabcf058ac498f0e5649fbdcbe71dae4e59f66e1ad9066fd495fa9bcde4da61edb7cbc7a6cacd0d93ac14e2c3e61d307882e5e37d62d1a55ae457ecb620ba1229c4d5481a16047f3950b3fd4a9a3637e61a1c698a823593024e0389249ab2d76f104dee851a6ca78f359471e57e6aea3c480d51e9f37bce966ffbe169b0a9d985cc2bc4d4f896658669f95688837acb267562cdd9ca9d3bd05921540ecd2904694b020557e3c3c1b06894249c7d2d862aa3696f1d6199cf8",
+      "from": "initiator",
+      "nonce": 0,
+      "plaintext_utf8": "{\"v\":1,\"id\":\"6f1c7a52-6e1e-4c41-9f1e-2b7d1c0a0001\",\"session\":\"00000000-0000-0000-0000-000000000000\",\"seq\":1,\"type\":\"pair.claim\",\"payload\":{\"token\":\"AAECAwQFBgcICQoLDA0ODw\",\"device_name\":\"Pixel 9\"}}"
+    },
+    {
+      "ciphertext_hex": "edab3e91b0b9957e4469a11283ca8e87266573094086db425f9c06c6d7b561c612f166f50dfcc1c8c83fad91dff021942b68c56032b59fc36cf46a558fc1c5a269eef19c84872caccfc5fc83af54372c1b0aeb9089ce0b18a461ab52911f3448f1a822f91029a31bfd8c45e43fa248b1aad322f33350e7b40ddf0c7bf7f3aad88d5998e78d43e41f81f7bee79f5251d6a35c33608dfb8260a5a18dd5e1b504ce7ffb80dd31b85d9f64944c0fecd012834655f946b96c84320c16723c8346232cae4423522bf162933a307c08c103f9f2a7",
+      "from": "responder",
+      "nonce": 0,
+      "plaintext_utf8": "{\"v\":1,\"id\":\"6f1c7a52-6e1e-4c41-9f1e-2b7d1c0a0002\",\"session\":\"3d2f9c1e-8a7b-4c6d-9e5f-0a1b2c3d4e5f\",\"seq\":1,\"type\":\"pair.result\",\"payload\":{\"ok\":true,\"laptop_name\":\"zxnj-laptop\",\"reason\":null}}"
+    }
+  ]
+}
