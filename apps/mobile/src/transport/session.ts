@@ -30,7 +30,8 @@ export interface SessionHandlers {
   onOpen?(info: { url: string; code: string; handshakeHash: Uint8Array }): void;
   onMessage?(env: Envelope): void;
   onFrame?(frame: FullFrame): void;
-  onClose?(reason: string, wasOpen: boolean): void;
+  /** `code` is the WebSocket close code when the peer/relay closed us (e.g. relay 4000 = replaced by a newer phone). */
+  onClose?(reason: string, wasOpen: boolean, code?: number): void;
 }
 
 export interface SessionOptions {
@@ -184,7 +185,7 @@ export class SecureSession {
         this.lastRx = this.now();
         ws.onmessage = (m) => this.onFrame(m.data);
         ws.onerror = () => this.teardown("network error");
-        ws.onclose = (c) => this.teardown(c.reason || "connection closed");
+        ws.onclose = (c) => this.teardown(c.reason || `connection closed (${c.code ?? "?"})`, c.code);
         if (this.opts.claim) this.send({ type: "pair.claim", payload: this.opts.claim });
         this.startPing();
         this.h.onOpen?.({ url, code: confirmationCode(t.handshakeHash), handshakeHash: t.handshakeHash });
@@ -228,7 +229,7 @@ export class SecureSession {
     }, this.opts.pingIntervalMs ?? PING_INTERVAL_MS);
   }
 
-  private teardown(reason: string): void {
+  private teardown(reason: string, code?: number): void {
     const wasOpen = this.open_;
     this.open_ = false;
     if (this.pingTimer) clearInterval(this.pingTimer);
@@ -254,7 +255,7 @@ export class SecureSession {
     this.frames.reset();
     if (wasOpen || this.closed) {
       this.closed = true;
-      this.h.onClose?.(reason, wasOpen);
+      this.h.onClose?.(reason, wasOpen, code);
     }
   }
 }

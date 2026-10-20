@@ -126,10 +126,10 @@ describe("frame reassembly", () => {
   it("reassembles unaligned split with padding", () => {
     const parts = split(jpeg, 333 + 1);
     const fa = new FrameAssembler();
-    let done = null;
+    let done: ReturnType<FrameAssembler["push"]> = null;
     parts.forEach((_, i) => (done = fa.push(frame(4, parts, i)) ?? done));
     expect(done).not.toBeNull();
-    expect(toHex(fromBase64(done!["jpegB64"]))).toBe(toHex(jpeg));
+    expect(toHex(fromBase64(done!.jpegB64))).toBe(toHex(jpeg));
   });
 
   it("drops stale frames when a newer one starts", () => {
