@@ -60,6 +60,7 @@ pub(crate) fn default_config() -> AgentConfig {
             .collect(),
         approval_timeout_secs: 60,
         max_agent_steps: 12,
+        laya_timeout_ms: 1200,
     }
 }
 
@@ -84,6 +85,7 @@ impl AgentConfig {
     fn sanitize(&mut self) {
         self.approval_timeout_secs = self.approval_timeout_secs.clamp(5, 600);
         self.max_agent_steps = self.max_agent_steps.clamp(1, 50);
+        self.laya_timeout_ms = self.laya_timeout_ms.clamp(50, 10_000);
         self.preferred_cloud = self.preferred_cloud.to_ascii_lowercase();
     }
 }

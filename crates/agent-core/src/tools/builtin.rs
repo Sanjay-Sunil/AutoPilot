@@ -297,7 +297,7 @@ pub fn registry(ctx: BuiltinCtx) -> ToolRegistry {
                 }
                 let rel = fix_root(&roots.names(), p);
                 let mut entries = roots.list(&rel)?;
-                entries.sort_by(|a, b| b.modified_ms.cmp(&a.modified_ms));
+                entries.sort_by_key(|e| std::cmp::Reverse(e.modified_ms));
                 let total = entries.len();
                 let mut s = format!("{rel}: {total} entries (newest first)\n");
                 for e in entries.iter().take(100) {
