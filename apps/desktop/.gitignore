@@ -1,0 +1,5 @@
+src-tauri/target
+src-tauri/gen
+src-tauri/Cargo.lock
+ui/public/main.js
+node_modules

@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AutoPilot</title>
+    <link rel="stylesheet" href="style.css" />
+    <script type="module" src="main.js"></script>
+  </head>
+  <body>
+    <nav>
+      <a href="#status">Status</a>
+      <a href="#pair">Pair</a>
+      <a href="#devices">Devices</a>
+      <button id="kill" class="danger" title="Ctrl+Alt+Shift+K">KILL</button>
+    </nav>
+    <main>
+      <section id="view-status" hidden>
+        <h1>Status</h1>
+        <pre id="status-out">Loading…</pre>
+        <button id="status-refresh">Refresh</button>
+      </section>
+      <section id="view-pair" hidden>
+        <h1>Pair phone</h1>
+        <p class="hint">Scan with the AutoPilot app, then check the code matches on both screens.</p>
+        <img id="qr" alt="Pairing QR code" width="280" height="280" />
+        <p>Code: <strong id="pair-code">——————</strong></p>
+        <p class="hint" id="pair-expiry"></p>
+        <button id="pair-new">New code</button>
+      </section>
+      <section id="view-devices" hidden>
+        <h1>Devices</h1>
+        <ul id="device-list"></ul>
+        <button id="devices-refresh">Refresh</button>
+      </section>
+      <p id="error" role="alert" hidden></p>
+    </main>
+  </body>
+</html>
