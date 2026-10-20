@@ -1,0 +1,18 @@
+[package]
+name = "agent-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow = "1.0.104"
+futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+tokio = { version = "1.54.0", features = ["rt", "macros", "time", "sync", "process", "io-util"] }
+tokio-util = { version = "0.7.20", features = ["codec"] }
+tracing = "0.1.44"
+
+[dev-dependencies]
+tokio = { version = "1.54.0", features = ["rt-multi-thread", "macros"] }

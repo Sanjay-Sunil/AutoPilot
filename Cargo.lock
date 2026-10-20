@@ -159,6 +159,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent-mcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures-util",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "agent-protocol"
 version = "0.1.0"
 dependencies = [

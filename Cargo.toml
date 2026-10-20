@@ -8,6 +8,7 @@ members = [
   "crates/agent-input",
   "crates/agent-browser",
   "crates/agent-llm",
+  "crates/agent-mcp",
   "crates/agent-transport",
   "crates/agent-core",
   "crates/autopilotd",
