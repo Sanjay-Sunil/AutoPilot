@@ -1,0 +1,20 @@
+[package]
+name = "agent-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+agent-audit = { version = "0.1.0", path = "../agent-audit" }
+agent-browser = { version = "0.1.0", path = "../agent-browser" }
+agent-capture = { version = "0.1.0", path = "../agent-capture" }
+agent-files = { version = "0.1.0", path = "../agent-files" }
+agent-input = { version = "0.1.0", path = "../agent-input" }
+agent-llm = { version = "0.1.0", path = "../agent-llm" }
+agent-protocol = { version = "0.1.0", path = "../agent-protocol" }
+anyhow = "1.0.104"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+tokio = { version = "1.54.0", features = ["full"] }
+uuid = { version = "1.26.1", features = ["v4"] }

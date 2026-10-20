@@ -1,0 +1,29 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/agent-protocol",
+  "crates/agent-audit",
+  "crates/agent-files",
+  "crates/agent-capture",
+  "crates/agent-input",
+  "crates/agent-browser",
+  "crates/agent-llm",
+  "crates/agent-transport",
+  "crates/agent-core",
+  "crates/autopilotd",
+  "services/backend",
+]
+exclude = ["apps/desktop/src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+rust-version = "1.85"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+opt-level = 3
+strip = true
+panic = "abort"

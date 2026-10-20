@@ -1,0 +1,12 @@
+[package]
+name = "agent-audit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+agent-protocol = { version = "0.1.0", path = "../agent-protocol" }
+anyhow = "1.0.104"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
