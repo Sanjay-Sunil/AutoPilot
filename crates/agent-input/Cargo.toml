@@ -10,3 +10,17 @@ agent-protocol = { version = "0.1.0", path = "../agent-protocol" }
 anyhow = "1.0.104"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+
+# enigo (X11 via x11rb) is opt-in on Linux to keep the default Wayland build light.
+[target.'cfg(target_os = "linux")'.dependencies]
+enigo = { version = "0.6.1", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+enigo = { version = "0.6.1" }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+[features]
+default = []
+x11 = ["dep:enigo"]
