@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use tokio::sync::mpsc;
 
 pub mod config;
+pub mod router;
 pub mod rules;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
